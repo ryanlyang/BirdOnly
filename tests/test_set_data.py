@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -12,7 +13,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from setv.errors import DataValidationError
 from setv.experts.set_config import load_set_expert_config
-from setv.experts.set_data import select_background_patch_tokens
+from setv.experts.set_data import (
+    select_background_patch_tokens,
+    select_training_background_view,
+)
 
 
 class SetDataTests(unittest.TestCase):
@@ -67,6 +71,76 @@ class SetDataTests(unittest.TestCase):
         self.assertEqual(selected.dtype, np.bool_)
         self.assertGreaterEqual(counts["retained_after_dropout"], 16)
         self.assertLess(counts["valid_before_cap"], 196)
+
+    def test_training_crop_retries_before_using_valid_view(self) -> None:
+        image = Image.new("RGB", (224, 224), "white")
+        source_mask = Image.new("L", (224, 224), 0)
+        invalid_mask = Image.new("L", (224, 224), 255)
+        valid_mask = Image.new("L", (224, 224), 0)
+
+        def invalid_transform(unused_image, unused_mask):
+            return image, invalid_mask
+
+        def valid_transform(unused_image, unused_mask):
+            return image, valid_mask
+
+        with patch(
+            "setv.experts.set_data.build_train_transform",
+            side_effect=[invalid_transform, valid_transform],
+        ):
+            _, token_mask, counts, metadata = select_training_background_view(
+                image,
+                source_mask,
+                {},
+                self.config,
+                sample_id="retry-fixture",
+                epoch=3,
+                base_seed=51,
+                eval_transform=valid_transform,
+            )
+        self.assertEqual(metadata["training_crop_attempt_count"], 2)
+        self.assertEqual(metadata["training_crop_rejected_count"], 1)
+        self.assertEqual(metadata["training_crop_fallback_used"], 0)
+        self.assertGreaterEqual(counts["retained_after_dropout"], 16)
+        self.assertEqual(int(token_mask.sum()), counts["retained_after_dropout"])
+
+    def test_training_crop_uses_audited_fallback_after_retry_limit(self) -> None:
+        config = {
+            **self.config,
+            "input": {
+                **self.config["input"],
+                "training_crop_max_attempts": 2,
+            },
+        }
+        image = Image.new("RGB", (224, 224), "white")
+        source_mask = Image.new("L", (224, 224), 0)
+        invalid_mask = Image.new("L", (224, 224), 255)
+        valid_mask = Image.new("L", (224, 224), 0)
+
+        def invalid_transform(unused_image, unused_mask):
+            return image, invalid_mask
+
+        def valid_transform(unused_image, unused_mask):
+            return image, valid_mask
+
+        with patch(
+            "setv.experts.set_data.build_train_transform",
+            side_effect=[invalid_transform, invalid_transform],
+        ):
+            _, _, counts, metadata = select_training_background_view(
+                image,
+                source_mask,
+                {},
+                config,
+                sample_id="fallback-fixture",
+                epoch=4,
+                base_seed=51,
+                eval_transform=valid_transform,
+            )
+        self.assertEqual(metadata["training_crop_attempt_count"], 2)
+        self.assertEqual(metadata["training_crop_rejected_count"], 2)
+        self.assertEqual(metadata["training_crop_fallback_used"], 1)
+        self.assertGreaterEqual(counts["retained_after_dropout"], 16)
 
 
 if __name__ == "__main__":

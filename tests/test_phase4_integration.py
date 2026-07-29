@@ -130,6 +130,13 @@ class Phase4IntegrationTests(unittest.TestCase):
             self.assertEqual(smoke["status"], "passed")
             self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
             self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
+            self.assertIn("train_crop_fallback_count", smoke["train"])
+            self.assertEqual(
+                smoke["canonical_fallback_capacity_audit"][
+                    "candidate_train"
+                ]["status"],
+                "passed",
+            )
             set_dir = train_set_expert(
                 set_config, model_factory=lambda unused: TinySetModel()
             )

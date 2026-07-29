@@ -278,6 +278,12 @@ Special cases:
   correcting the configuration to the weights' declared preprocessing is an
   implementation repair and may retry the same stage from a clean commit. The
   new submission receipt must record the corrected config hash.
+- Phase 4 smoke rejected an augmented crop with fewer than 16 clean background
+  tokens: retain the failed smoke log and submission receipt. If no Phase 4
+  artifact was published, deterministic crop retries plus an audited
+  canonical fallback are an implementation repair because the locked 1%
+  foreground threshold and 16-token minimum remain unchanged. Retry from a
+  clean commit and retain both submission receipts.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified

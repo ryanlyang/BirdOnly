@@ -15,6 +15,18 @@ from setv.experts.object_data import normalized_tensor
 from setv.utils.seeds import derive_seed
 
 
+class InsufficientBackgroundTokensError(DataValidationError):
+    """A transformed view cannot satisfy the locked set-cardinality floor."""
+
+    def __init__(self, available: int, minimum: int):
+        self.available = int(available)
+        self.minimum = int(minimum)
+        super().__init__(
+            f"Only {self.available} valid background patches remain; "
+            f"minimum is {self.minimum}"
+        )
+
+
 def select_background_patch_tokens(
     mask,
     config: dict[str, Any],
@@ -56,9 +68,7 @@ def select_background_patch_tokens(
     )
     minimum = int(input_config["min_background_tokens"])
     if len(valid) < minimum:
-        raise DataValidationError(
-            f"Only {len(valid)} valid background patches remain; minimum is {minimum}"
-        )
+        raise InsufficientBackgroundTokensError(len(valid), minimum)
     maximum = int(input_config["max_background_tokens"])
     if len(valid) > maximum:
         generator = np.random.default_rng(selection_seed)
@@ -84,6 +94,87 @@ def select_background_patch_tokens(
         "valid_after_cap": before_dropout,
         "retained_after_dropout": int(token_mask.sum()),
         "dilation_radius": dilation_radius,
+    }
+
+
+def select_training_background_view(
+    image,
+    mask,
+    phase0_config: dict[str, Any],
+    expert_config: dict[str, Any],
+    *,
+    sample_id: str,
+    epoch: int,
+    base_seed: int,
+    eval_transform,
+):
+    """Select a deterministic valid crop without weakening patch eligibility."""
+
+    maximum_attempts = int(
+        expert_config["input"]["training_crop_max_attempts"]
+    )
+    rejected_counts: list[int] = []
+    for attempt in range(maximum_attempts):
+        namespace = f"epoch={epoch}:sample={sample_id}"
+        if attempt:
+            namespace = f"{namespace}:retry={attempt}"
+        transform = build_train_transform(
+            phase0_config,
+            derive_seed(base_seed, f"set_transform:{namespace}"),
+        )
+        transformed_image, transformed_mask = transform(image, mask)
+        try:
+            token_mask, counts = select_background_patch_tokens(
+                transformed_mask,
+                expert_config,
+                selection_seed=derive_seed(
+                    base_seed, f"set_cap:{namespace}"
+                ),
+                dropout_seed=derive_seed(
+                    base_seed, f"set_dropout:{namespace}"
+                ),
+                apply_dropout=True,
+            )
+        except InsufficientBackgroundTokensError as exc:
+            rejected_counts.append(exc.available)
+            continue
+        return transformed_image, token_mask, counts, {
+            "training_crop_attempt_count": attempt + 1,
+            "training_crop_rejected_count": attempt,
+            "training_crop_fallback_used": 0,
+        }
+
+    if (
+        expert_config["input"]["training_crop_fallback"]
+        != "canonical_evaluation_transform"
+    ):
+        raise DataValidationError("Unsupported set-expert crop fallback")
+    transformed_image, transformed_mask = eval_transform(image, mask)
+    try:
+        token_mask, counts = select_background_patch_tokens(
+            transformed_mask,
+            expert_config,
+            selection_seed=derive_seed(
+                base_seed,
+                f"set_cap:epoch={epoch}:sample={sample_id}:fallback",
+            ),
+            dropout_seed=derive_seed(
+                base_seed,
+                f"set_dropout:epoch={epoch}:sample={sample_id}:fallback",
+            ),
+            apply_dropout=True,
+        )
+    except InsufficientBackgroundTokensError as exc:
+        raise DataValidationError(
+            "Set-expert canonical fallback cannot satisfy the locked token "
+            f"minimum for sample {sample_id}: "
+            f"rejected_crop_counts={rejected_counts}, "
+            f"fallback_available={exc.available}, minimum={exc.minimum}"
+        ) from exc
+    return transformed_image, token_mask, counts, {
+        "training_crop_attempt_count": maximum_attempts,
+        "training_crop_rejected_count": maximum_attempts,
+        "training_crop_fallback_used": 1,
     }
 
 
@@ -127,43 +218,75 @@ class SetBackgroundDataset:
     def __len__(self) -> int:
         return len(self.base)
 
+    def audit_canonical_background_capacity(self) -> dict[str, Any]:
+        available_counts: list[int] = []
+        minimum_sample_id: str | None = None
+        minimum_available: int | None = None
+        for index in range(len(self.base)):
+            example = self.base[index]
+            _, mask = self.eval_transform(example.image, example.mask)
+            try:
+                _, counts = select_background_patch_tokens(
+                    mask,
+                    self.config,
+                    selection_seed=derive_seed(
+                        self.base_seed,
+                        f"set_fallback_audit:sample={example.sample_id}",
+                    ),
+                    dropout_seed=0,
+                    apply_dropout=False,
+                )
+            except InsufficientBackgroundTokensError as exc:
+                raise DataValidationError(
+                    "Set-expert canonical fallback fails the locked token "
+                    f"minimum for sample {example.sample_id}: "
+                    f"available={exc.available}, minimum={exc.minimum}"
+                ) from exc
+            available = int(counts["valid_before_cap"])
+            available_counts.append(available)
+            if minimum_available is None or available < minimum_available:
+                minimum_available = available
+                minimum_sample_id = str(example.sample_id)
+        return {
+            "sample_count": len(available_counts),
+            "minimum_valid_background_tokens": int(minimum_available),
+            "maximum_valid_background_tokens": int(max(available_counts)),
+            "mean_valid_background_tokens": float(np.mean(available_counts)),
+            "minimum_sample_id": minimum_sample_id,
+            "locked_minimum_tokens": int(
+                self.config["input"]["min_background_tokens"]
+            ),
+            "status": "passed",
+        }
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         import torch
 
         example = self.base[index]
         if self.training:
-            transform = build_train_transform(
-                self.phase0_config,
-                derive_seed(
-                    self.base_seed,
-                    f"set_transform:epoch={self.epoch}:sample={example.sample_id}",
-                ),
+            image, token_mask, counts, crop_metadata = (
+                select_training_background_view(
+                    example.image,
+                    example.mask,
+                    self.phase0_config,
+                    self.config,
+                    sample_id=str(example.sample_id),
+                    epoch=self.epoch,
+                    base_seed=self.base_seed,
+                    eval_transform=self.eval_transform,
+                )
             )
-        else:
-            transform = self.eval_transform
-        image, mask = transform(example.image, example.mask)
-        image_tensor = normalized_tensor(image, self.mean, self.std)
-        if self.training:
-            token_mask, counts = select_background_patch_tokens(
-                mask,
-                self.config,
-                selection_seed=derive_seed(
-                    self.base_seed,
-                    f"set_cap:epoch={self.epoch}:sample={example.sample_id}",
-                ),
-                dropout_seed=derive_seed(
-                    self.base_seed,
-                    f"set_dropout:epoch={self.epoch}:sample={example.sample_id}",
-                ),
-                apply_dropout=True,
-            )
+            image_tensor = normalized_tensor(image, self.mean, self.std)
             return {
                 "image": image_tensor,
                 "token_mask": torch.from_numpy(token_mask),
                 "target": int(example.target),
                 "sample_id": example.sample_id,
                 **counts,
+                **crop_metadata,
             }
+        image, mask = self.eval_transform(example.image, example.mask)
+        image_tensor = normalized_tensor(image, self.mean, self.std)
         view_masks = []
         view_counts = []
         for view in range(int(self.config["training"]["validation_views"])):

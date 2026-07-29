@@ -21,8 +21,17 @@ class SetConfigTests(unittest.TestCase):
         self.assertEqual(config["training"]["seed"], 41)
         self.assertFalse(config["input"]["use_dense_position_embeddings"])
         self.assertEqual(config["training"]["validation_views"], 8)
+        self.assertEqual(config["input"]["training_crop_max_attempts"], 10)
+        self.assertEqual(
+            config["input"]["training_crop_fallback"],
+            "canonical_evaluation_transform",
+        )
         changed = deepcopy(config)
         changed["input"]["maximum_foreground_fraction"] = 0.02
+        with self.assertRaises(ConfigurationError):
+            validate_set_expert_config(changed)
+        changed = deepcopy(config)
+        changed["input"]["training_crop_max_attempts"] = 9
         with self.assertRaises(ConfigurationError):
             validate_set_expert_config(changed)
 

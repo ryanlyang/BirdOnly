@@ -18,6 +18,15 @@ is used only to decide which ViT-S/16 patch tokens are admitted:
 5. During training, retain a deterministic random 80% subset, subject to the
    16-token minimum.
 
+Random resized crops are valid only when they preserve the locked 16-token
+minimum. Training deterministically tries the original crop seed and up to
+nine derived retry seeds. If all ten crops are invalid, it uses the canonical
+evaluation transform for that sample and epoch. Before model construction,
+the complete candidate-train and biased-validation splits are audited to
+prove that this canonical fallback satisfies the minimum for every image.
+Neither foreground eligibility nor the token minimum is relaxed. Per-epoch
+metrics record attempted crops, rejected crops, and fallback counts.
+
 The deterministic maximum-token cap and fixed-count dropout are implementation
 choices used to make a run exactly reproducible. Their seeds and resolved
 settings are persisted.

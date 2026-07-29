@@ -25,6 +25,8 @@ input:
   min_background_tokens: 16
   coarse_spatial_bins_per_axis: 3
   use_dense_position_embeddings: false
+  training_crop_max_attempts: 10
+  training_crop_fallback: canonical_evaluation_transform
 
 training:
   seed: null

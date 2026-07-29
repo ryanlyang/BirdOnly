@@ -74,6 +74,10 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         config,
         training=False,
     )
+    fallback_capacity_audit = {
+        "candidate_train": train_dataset.audit_canonical_background_capacity(),
+        "biased_val": validation_dataset.audit_canonical_background_capacity(),
+    }
     training = config["training"]
     seed = int(training["seed"])
     generator = torch.Generator()
@@ -99,7 +103,12 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         drop_last=False,
         **common,
     )
-    return train_dataset, train_loader, validation_loader
+    return (
+        train_dataset,
+        train_loader,
+        validation_loader,
+        fallback_capacity_audit,
+    )
 
 
 def _prepare(config: dict, model_factory: ModelFactory | None):
@@ -118,9 +127,12 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     device = _device(config)
-    train_dataset, train_loader, validation_loader = _make_loaders(
-        phase0_dir, phase0_config, config
-    )
+    (
+        train_dataset,
+        train_loader,
+        validation_loader,
+        fallback_capacity_audit,
+    ) = _make_loaders(phase0_dir, phase0_config, config)
     model = (model_factory or create_set_expert_model)(config).to(device)
     initialization_report = getattr(
         model,
@@ -170,6 +182,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         "train_dataset": train_dataset,
         "train_loader": train_loader,
         "validation_loader": validation_loader,
+        "fallback_capacity_audit": fallback_capacity_audit,
         "model": model,
         "initialization_report": initialization_report,
         "pretrained_provenance": pretrained_provenance,
@@ -200,6 +213,9 @@ def _train_epoch(
     amp_skipped_step_count = 0
     retained_counts = []
     valid_counts = []
+    crop_attempt_counts = []
+    crop_rejected_counts = []
+    crop_fallback_count = 0
     started = time.monotonic()
     for batch in loader:
         images = batch["image"].to(device, non_blocking=True)
@@ -224,6 +240,15 @@ def _train_epoch(
         sample_count += batch_size
         retained_counts.extend(batch["retained_after_dropout"].numpy().tolist())
         valid_counts.extend(batch["valid_after_cap"].numpy().tolist())
+        crop_attempt_counts.extend(
+            batch["training_crop_attempt_count"].numpy().tolist()
+        )
+        crop_rejected_counts.extend(
+            batch["training_crop_rejected_count"].numpy().tolist()
+        )
+        crop_fallback_count += int(
+            batch["training_crop_fallback_used"].sum()
+        )
     if optimizer_step_count == 0:
         raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
@@ -236,6 +261,14 @@ def _train_epoch(
         "train_retained_tokens_mean": float(np.mean(retained_counts)),
         "train_retained_tokens_minimum": int(np.min(retained_counts)),
         "train_retained_tokens_maximum": int(np.max(retained_counts)),
+        "train_crop_random_attempts_mean": float(
+            np.mean(crop_attempt_counts)
+        ),
+        "train_crop_random_attempts_maximum": int(
+            np.max(crop_attempt_counts)
+        ),
+        "train_crop_rejected_count": int(np.sum(crop_rejected_counts)),
+        "train_crop_fallback_count": crop_fallback_count,
         "epoch_seconds": time.monotonic() - started,
         "learning_rate": float(optimizer.param_groups[0]["lr"]),
     }
@@ -349,6 +382,9 @@ def run_set_expert_smoke(
         "score_summary": summary,
         "scientific_warnings": _warnings(summary),
         "initialization": prepared["initialization_report"],
+        "canonical_fallback_capacity_audit": prepared[
+            "fallback_capacity_audit"
+        ],
         "projected_thirty_epoch_seconds": float(
             (
                 train_metrics["epoch_seconds"]
@@ -496,6 +532,15 @@ def train_set_expert(
                 ],
                 "minimum_tokens": config["input"]["min_background_tokens"],
                 "training_dropout": "deterministic_fixed_count_without_replacement",
+                "training_crop_max_attempts": config["input"][
+                    "training_crop_max_attempts"
+                ],
+                "training_crop_fallback": config["input"][
+                    "training_crop_fallback"
+                ],
+                "canonical_fallback_capacity_audit": prepared[
+                    "fallback_capacity_audit"
+                ],
             },
             "config_sha256": sha256_json(resolved),
             "phase0_dir": str(prepared["phase0_dir"]),

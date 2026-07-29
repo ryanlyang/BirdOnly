@@ -104,7 +104,9 @@ ViT-S/16 patch projection, CLS token, first four transformer blocks, and final
 LayerNorm; adds only coarse 3-by-3 position embeddings; discards dense
 positions; and uses no second pooling module. Validation averages eight
 token-dropout views at the raw-logit level before hard, rank, and repeated
-cross-fitted logistic fusion. See
+cross-fitted logistic fusion. Invalid training crops are deterministically
+retried without relaxing the locked 16-background-token minimum; the
+canonical fallback is audited over every train and validation image. See
 `docs/PHASE4_BACKGROUND_SET_TRANSFORMER.md`.
 
 ## Phase 5
