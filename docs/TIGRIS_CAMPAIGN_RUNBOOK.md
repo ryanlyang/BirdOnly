@@ -291,6 +291,13 @@ Special cases:
   `preflight/set_capacity_job<job>.json` and companion sample CSV before
   changing the floor. The census is diagnostic-only and does not constitute
   approval to alter the scientific contract.
+- Capacity census job 22266 established that only candidate-train samples
+  `4887` and `6285` fail the 16-token floor in both fixed views; biased
+  validation has no failures. The approved repair excludes those two samples
+  only from set-expert auxiliary training, retains them everywhere else, and
+  chooses the higher-capacity canonical/full-frame view after ten invalid
+  crops. The smoke and final receipts must reproduce exactly two exclusions
+  with one sample from each target class before production is accepted.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified

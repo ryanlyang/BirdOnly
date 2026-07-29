@@ -106,9 +106,10 @@ positions; and uses no second pooling module. Validation averages eight
 token-dropout views at the raw-logit level before hard, rank, and repeated
 cross-fitted logistic fusion. Invalid training crops are deterministically
 retried without relaxing the locked 16-background-token minimum; the
-fallback fits the complete frame with aspect ratio preserved and marks all
-padding ineligible. Every train and validation image is audited before model
-construction. See
+fallback chooses the higher-capacity canonical or full-frame view, with all
+full-frame padding marked ineligible. The census-approved capacity rule
+excludes samples `4887` and `6285` only from this auxiliary expert's training;
+candidate ERM and validation remain unchanged. See
 `docs/PHASE4_BACKGROUND_SET_TRANSFORMER.md`.
 
 When the locked floor is infeasible on real masks, the read-only

@@ -122,6 +122,9 @@ class Phase4IntegrationTests(unittest.TestCase):
             set_config["training"].update(
                 {"num_workers": 0, "evaluation_batch_size": 4, "mixed_precision": False}
             )
+            # This synthetic fixture has no census exclusions. Production
+            # retains the locked job-22266 expectation of 4887 and 6285.
+            set_config["input"]["training_capacity_expected_exclusions"] = []
             smoke = run_set_expert_smoke(
                 set_config,
                 root / "set_smoke.json",
@@ -140,8 +143,14 @@ class Phase4IntegrationTests(unittest.TestCase):
             self.assertGreaterEqual(
                 smoke["background_view_capacity_audit"][
                     "candidate_train"
-                ]["full_frame_fallback_fraction"],
+                ]["fixed_view_fallback_fraction"],
                 0.0,
+            )
+            self.assertEqual(
+                smoke["training_capacity_eligibility"][
+                    "original_sample_count"
+                ],
+                32,
             )
             set_dir = train_set_expert(
                 set_config, model_factory=lambda unused: TinySetModel()

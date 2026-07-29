@@ -114,6 +114,37 @@ def select_background_patch_tokens(
     }
 
 
+def best_fixed_background_view(
+    image,
+    mask,
+    expert_config: dict[str, Any],
+    *,
+    canonical_transform,
+    full_frame_transform,
+):
+    """Choose the fixed view with more eligible real-background patches."""
+
+    candidates = []
+    for view_name, transform in (
+        ("canonical", canonical_transform),
+        ("full_frame", full_frame_transform),
+    ):
+        transformed_image, transformed_mask = transform(image, mask)
+        capacity = background_patch_capacity(
+            transformed_mask, expert_config
+        )
+        candidates.append(
+            (
+                int(capacity["eligible_count"]),
+                view_name,
+                transformed_image,
+                transformed_mask,
+            )
+        )
+    # Stable candidate order deliberately gives canonical the tie.
+    return max(candidates, key=lambda item: item[0])
+
+
 def select_training_background_view(
     image,
     mask,
@@ -123,7 +154,8 @@ def select_training_background_view(
     sample_id: str,
     epoch: int,
     base_seed: int,
-    fallback_transform,
+    canonical_transform,
+    full_frame_transform,
 ):
     """Select a deterministic valid crop without weakening patch eligibility."""
 
@@ -159,14 +191,26 @@ def select_training_background_view(
             "training_crop_attempt_count": attempt + 1,
             "training_crop_rejected_count": attempt,
             "training_crop_fallback_used": 0,
+            "training_crop_fallback_view_code": 0,
         }
 
     if (
         expert_config["input"]["training_crop_fallback"]
-        != "full_frame_aspect_fit_excluding_padding"
+        != "best_of_canonical_and_full_frame"
     ):
         raise DataValidationError("Unsupported set-expert crop fallback")
-    transformed_image, transformed_mask = fallback_transform(image, mask)
+    (
+        fallback_available,
+        fallback_view,
+        transformed_image,
+        transformed_mask,
+    ) = best_fixed_background_view(
+        image,
+        mask,
+        expert_config,
+        canonical_transform=canonical_transform,
+        full_frame_transform=full_frame_transform,
+    )
     try:
         token_mask, counts = select_background_patch_tokens(
             transformed_mask,
@@ -183,15 +227,19 @@ def select_training_background_view(
         )
     except InsufficientBackgroundTokensError as exc:
         raise DataValidationError(
-            "Set-expert full-frame fallback cannot satisfy the locked token "
+            "Set-expert best fixed-view fallback cannot satisfy the locked token "
             f"minimum for sample {sample_id}: "
             f"rejected_crop_counts={rejected_counts}, "
-            f"fallback_available={exc.available}, minimum={exc.minimum}"
+            f"fallback_view={fallback_view}, "
+            f"fallback_available={fallback_available}, minimum={exc.minimum}"
         ) from exc
     return transformed_image, token_mask, counts, {
         "training_crop_attempt_count": maximum_attempts,
         "training_crop_rejected_count": maximum_attempts,
         "training_crop_fallback_used": 1,
+        "training_crop_fallback_view_code": (
+            1 if fallback_view == "canonical" else 2
+        ),
     }
 
 
@@ -238,6 +286,119 @@ class SetBackgroundDataset:
     def __len__(self) -> int:
         return len(self.base)
 
+    def apply_training_capacity_eligibility(
+        self, *, enforce_expected: bool = True
+    ) -> dict[str, Any]:
+        """Exclude only auxiliary-training rows with no valid fixed view."""
+
+        if not self.training:
+            raise DataValidationError(
+                "Capacity eligibility exclusion is training-only"
+            )
+        if (
+            self.config["input"]["training_capacity_ineligible_policy"]
+            != "exclude_from_auxiliary_expert"
+        ):
+            raise DataValidationError(
+                "Unsupported set-expert capacity-ineligible policy"
+            )
+        minimum = int(self.config["input"]["min_background_tokens"])
+        original_count = len(self.base)
+        retained_indices: list[int] = []
+        excluded: list[dict[str, Any]] = []
+        for index in range(original_count):
+            example = self.base[index]
+            (
+                best_available,
+                best_view,
+                _,
+                _,
+            ) = best_fixed_background_view(
+                example.image,
+                example.mask,
+                self.config,
+                canonical_transform=self.eval_transform,
+                full_frame_transform=self.full_frame_transform,
+            )
+            if best_available >= minimum:
+                retained_indices.append(index)
+                continue
+            _, canonical_mask = self.eval_transform(
+                example.image, example.mask
+            )
+            _, full_frame_mask = self.full_frame_transform(
+                example.image, example.mask
+            )
+            excluded.append(
+                {
+                    "sample_id": str(example.sample_id),
+                    "target": int(example.target),
+                    "canonical_capacity": int(
+                        background_patch_capacity(
+                            canonical_mask, self.config
+                        )["eligible_count"]
+                    ),
+                    "full_frame_capacity": int(
+                        background_patch_capacity(
+                            full_frame_mask, self.config
+                        )["eligible_count"]
+                    ),
+                    "best_fixed_view": best_view,
+                    "best_fixed_view_capacity": best_available,
+                }
+            )
+        excluded.sort(key=lambda item: int(item["sample_id"]))
+        expected_exclusions = self.config["input"][
+            "training_capacity_expected_exclusions"
+        ]
+        if enforce_expected and excluded != expected_exclusions:
+            raise DataValidationError(
+                "Set-expert capacity exclusions do not match the locked "
+                "job-22266 census decision. Refusing to train on silently "
+                "changed masks or split data. "
+                f"Expected {expected_exclusions!r}; observed {excluded!r}"
+            )
+        self.base.rows = self.base.rows.iloc[retained_indices].reset_index(
+            drop=True
+        )
+        if len(self.base) == 0:
+            raise DataValidationError(
+                "Capacity eligibility excluded every auxiliary-training image"
+            )
+        excluded_class_counts = {
+            str(target): sum(
+                int(item["target"]) == target for item in excluded
+            )
+            for target in (0, 1)
+        }
+        return {
+            "policy": "exclude_from_auxiliary_expert",
+            "scope": "background_set_auxiliary_training_only",
+            "candidate_erm_training_unchanged": True,
+            "minimum_tokens": minimum,
+            "original_sample_count": original_count,
+            "retained_sample_count": len(self.base),
+            "excluded_sample_count": len(excluded),
+            "excluded_fraction": len(excluded) / original_count,
+            "excluded_class_counts": excluded_class_counts,
+            "excluded_samples": excluded,
+            "expected_exclusions_verified": (
+                excluded == expected_exclusions
+            ),
+            "capacity_census_provenance": {
+                "job_id": self.config["input"][
+                    "training_capacity_census_job_id"
+                ],
+                "json_sha256": self.config["input"][
+                    "training_capacity_census_json_sha256"
+                ],
+                "csv_sha256": self.config["input"][
+                    "training_capacity_census_csv_sha256"
+                ],
+            },
+            "protected_group_columns_loaded": False,
+        }
+
     def audit_background_view_capacity(self) -> dict[str, Any]:
         available_counts: list[int] = []
         canonical_available_counts: list[int] = []
@@ -246,49 +407,43 @@ class SetBackgroundDataset:
         minimum_available: int | None = None
         for index in range(len(self.base)):
             example = self.base[index]
-            _, mask = self.eval_transform(example.image, example.mask)
-            try:
-                _, counts = select_background_patch_tokens(
-                    mask,
-                    self.config,
-                    selection_seed=derive_seed(
-                        self.base_seed,
-                        f"set_fallback_audit:sample={example.sample_id}",
-                    ),
-                    dropout_seed=0,
-                    apply_dropout=False,
+            _, canonical_mask = self.eval_transform(
+                example.image, example.mask
+            )
+            canonical_available = int(
+                background_patch_capacity(
+                    canonical_mask, self.config
+                )["eligible_count"]
+            )
+            canonical_available_counts.append(canonical_available)
+            (
+                best_available,
+                best_view,
+                _,
+                _,
+            ) = best_fixed_background_view(
+                example.image,
+                example.mask,
+                self.config,
+                canonical_transform=self.eval_transform,
+                full_frame_transform=self.full_frame_transform,
+            )
+            minimum = int(
+                self.config["input"]["min_background_tokens"]
+            )
+            if best_available < minimum:
+                raise DataValidationError(
+                    "Set-expert fixed views fail the locked token minimum "
+                    f"for sample {example.sample_id}: "
+                    f"best_available={best_available}, minimum={minimum}"
                 )
-            except InsufficientBackgroundTokensError as exc:
-                canonical_available_counts.append(exc.available)
+            if canonical_available < minimum:
                 fallback_sample_ids.append(str(example.sample_id))
-                _, mask = self.full_frame_transform(
-                    example.image, example.mask
-                )
-                try:
-                    _, counts = select_background_patch_tokens(
-                        mask,
-                        self.config,
-                        selection_seed=derive_seed(
-                            self.base_seed,
-                            "set_full_frame_audit:"
-                            f"sample={example.sample_id}",
-                        ),
-                        dropout_seed=0,
-                        apply_dropout=False,
-                    )
-                except InsufficientBackgroundTokensError as fallback_exc:
-                    raise DataValidationError(
-                        "Set-expert full-frame fallback fails the locked token "
-                        f"minimum for sample {example.sample_id}: "
-                        f"canonical_available={exc.available}, "
-                        f"fallback_available={fallback_exc.available}, "
-                        f"minimum={fallback_exc.minimum}"
-                    ) from fallback_exc
-            else:
-                canonical_available_counts.append(
-                    int(counts["valid_before_cap"])
-                )
-            available = int(counts["valid_before_cap"])
+            available = (
+                canonical_available
+                if canonical_available >= minimum
+                else best_available
+            )
             available_counts.append(available)
             if minimum_available is None or available < minimum_available:
                 minimum_available = available
@@ -302,11 +457,14 @@ class SetBackgroundDataset:
             "canonical_view_minimum_valid_background_tokens": int(
                 min(canonical_available_counts)
             ),
-            "full_frame_fallback_sample_count": len(fallback_sample_ids),
-            "full_frame_fallback_fraction": (
+            "fixed_view_fallback_sample_count": len(fallback_sample_ids),
+            "fixed_view_fallback_fraction": (
                 len(fallback_sample_ids) / len(available_counts)
             ),
-            "full_frame_fallback_sample_ids": fallback_sample_ids,
+            "fixed_view_fallback_sample_ids": fallback_sample_ids,
+            "fixed_view_fallback_policy": (
+                "best_of_canonical_and_full_frame"
+            ),
             "locked_minimum_tokens": int(
                 self.config["input"]["min_background_tokens"]
             ),
@@ -327,7 +485,8 @@ class SetBackgroundDataset:
                     sample_id=str(example.sample_id),
                     epoch=self.epoch,
                     base_seed=self.base_seed,
-                    fallback_transform=self.full_frame_transform,
+                    canonical_transform=self.eval_transform,
+                    full_frame_transform=self.full_frame_transform,
                 )
             )
             image_tensor = normalized_tensor(image, self.mean, self.std)
@@ -353,14 +512,26 @@ class SetBackgroundDataset:
                 self.config["input"][
                     "evaluation_insufficient_view_fallback"
                 ]
-                != "full_frame_aspect_fit_excluding_padding"
+                != "best_of_canonical_and_full_frame"
             ):
                 raise DataValidationError(
                     "Unsupported set-expert evaluation fallback"
                 )
-            image, mask = self.full_frame_transform(
-                example.image, example.mask
+            best_available, _, image, mask = best_fixed_background_view(
+                example.image,
+                example.mask,
+                self.config,
+                canonical_transform=self.eval_transform,
+                full_frame_transform=self.full_frame_transform,
             )
+            if best_available < int(
+                self.config["input"]["min_background_tokens"]
+            ):
+                raise DataValidationError(
+                    "Validation sample has no capacity-eligible fixed view: "
+                    f"sample_id={example.sample_id}, "
+                    f"best_available={best_available}"
+                )
         image_tensor = normalized_tensor(image, self.mean, self.std)
         view_masks = []
         view_counts = []

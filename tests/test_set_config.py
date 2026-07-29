@@ -24,14 +24,34 @@ class SetConfigTests(unittest.TestCase):
         self.assertEqual(config["input"]["training_crop_max_attempts"], 10)
         self.assertEqual(
             config["input"]["training_crop_fallback"],
-            "full_frame_aspect_fit_excluding_padding",
+            "best_of_canonical_and_full_frame",
         )
         self.assertEqual(
             config["input"]["evaluation_insufficient_view_fallback"],
-            "full_frame_aspect_fit_excluding_padding",
+            "best_of_canonical_and_full_frame",
+        )
+        self.assertEqual(
+            config["input"]["training_capacity_ineligible_policy"],
+            "exclude_from_auxiliary_expert",
+        )
+        self.assertEqual(
+            [
+                item["sample_id"]
+                for item in config["input"][
+                    "training_capacity_expected_exclusions"
+                ]
+            ],
+            ["4887", "6285"],
+        )
+        self.assertEqual(
+            config["input"]["training_capacity_census_job_id"], "22266"
         )
         changed = deepcopy(config)
         changed["input"]["maximum_foreground_fraction"] = 0.02
+        with self.assertRaises(ConfigurationError):
+            validate_set_expert_config(changed)
+        changed = deepcopy(config)
+        changed["input"]["training_capacity_expected_exclusions"] = []
         with self.assertRaises(ConfigurationError):
             validate_set_expert_config(changed)
         changed = deepcopy(config)

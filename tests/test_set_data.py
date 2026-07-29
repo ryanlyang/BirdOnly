@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from setv.errors import DataValidationError
 from setv.experts.set_config import load_set_expert_config
 from setv.experts.set_data import (
+    best_fixed_background_view,
     select_background_patch_tokens,
     select_training_background_view,
 )
@@ -96,7 +97,8 @@ class SetDataTests(unittest.TestCase):
                 sample_id="retry-fixture",
                 epoch=3,
                 base_seed=51,
-                fallback_transform=valid_transform,
+                canonical_transform=valid_transform,
+                full_frame_transform=valid_transform,
             )
         self.assertEqual(metadata["training_crop_attempt_count"], 2)
         self.assertEqual(metadata["training_crop_rejected_count"], 1)
@@ -135,12 +137,45 @@ class SetDataTests(unittest.TestCase):
                 sample_id="fallback-fixture",
                 epoch=4,
                 base_seed=51,
-                fallback_transform=valid_transform,
+                canonical_transform=invalid_transform,
+                full_frame_transform=valid_transform,
             )
         self.assertEqual(metadata["training_crop_attempt_count"], 2)
         self.assertEqual(metadata["training_crop_rejected_count"], 2)
         self.assertEqual(metadata["training_crop_fallback_used"], 1)
+        self.assertEqual(metadata["training_crop_fallback_view_code"], 2)
         self.assertGreaterEqual(counts["retained_after_dropout"], 16)
+
+    def test_best_fixed_view_uses_capacity_and_canonical_tie_break(self) -> None:
+        image = Image.new("RGB", (224, 224), "white")
+        source_mask = Image.new("L", (224, 224), 0)
+        invalid_mask = Image.new("L", (224, 224), 255)
+        valid_mask = Image.new("L", (224, 224), 0)
+
+        def invalid_transform(unused_image, unused_mask):
+            return image, invalid_mask
+
+        def valid_transform(unused_image, unused_mask):
+            return image, valid_mask
+
+        available, view, _, _ = best_fixed_background_view(
+            image,
+            source_mask,
+            self.config,
+            canonical_transform=invalid_transform,
+            full_frame_transform=valid_transform,
+        )
+        self.assertEqual(view, "full_frame")
+        self.assertEqual(available, 196)
+
+        _, tied_view, _, _ = best_fixed_background_view(
+            image,
+            source_mask,
+            self.config,
+            canonical_transform=valid_transform,
+            full_frame_transform=valid_transform,
+        )
+        self.assertEqual(tied_view, "canonical")
 
     def test_full_frame_padding_cannot_be_selected_as_background(self) -> None:
         from setv.data.joint_transforms import (

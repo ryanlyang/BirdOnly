@@ -74,6 +74,9 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         config,
         training=False,
     )
+    training_capacity_eligibility = (
+        train_dataset.apply_training_capacity_eligibility()
+    )
     background_view_capacity_audit = {
         "candidate_train": train_dataset.audit_background_view_capacity(),
         "biased_val": validation_dataset.audit_background_view_capacity(),
@@ -107,6 +110,7 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         train_dataset,
         train_loader,
         validation_loader,
+        training_capacity_eligibility,
         background_view_capacity_audit,
     )
 
@@ -131,6 +135,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         train_dataset,
         train_loader,
         validation_loader,
+        training_capacity_eligibility,
         background_view_capacity_audit,
     ) = _make_loaders(phase0_dir, phase0_config, config)
     model = (model_factory or create_set_expert_model)(config).to(device)
@@ -182,6 +187,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         "train_dataset": train_dataset,
         "train_loader": train_loader,
         "validation_loader": validation_loader,
+        "training_capacity_eligibility": training_capacity_eligibility,
         "background_view_capacity_audit": background_view_capacity_audit,
         "model": model,
         "initialization_report": initialization_report,
@@ -216,6 +222,8 @@ def _train_epoch(
     crop_attempt_counts = []
     crop_rejected_counts = []
     crop_fallback_count = 0
+    crop_canonical_fallback_count = 0
+    crop_full_frame_fallback_count = 0
     started = time.monotonic()
     for batch in loader:
         images = batch["image"].to(device, non_blocking=True)
@@ -249,6 +257,12 @@ def _train_epoch(
         crop_fallback_count += int(
             batch["training_crop_fallback_used"].sum()
         )
+        crop_canonical_fallback_count += int(
+            (batch["training_crop_fallback_view_code"] == 1).sum()
+        )
+        crop_full_frame_fallback_count += int(
+            (batch["training_crop_fallback_view_code"] == 2).sum()
+        )
     if optimizer_step_count == 0:
         raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
@@ -269,6 +283,12 @@ def _train_epoch(
         ),
         "train_crop_rejected_count": int(np.sum(crop_rejected_counts)),
         "train_crop_fallback_count": crop_fallback_count,
+        "train_crop_canonical_fallback_count": (
+            crop_canonical_fallback_count
+        ),
+        "train_crop_full_frame_fallback_count": (
+            crop_full_frame_fallback_count
+        ),
         "epoch_seconds": time.monotonic() - started,
         "learning_rate": float(optimizer.param_groups[0]["lr"]),
     }
@@ -382,6 +402,9 @@ def run_set_expert_smoke(
         "score_summary": summary,
         "scientific_warnings": _warnings(summary),
         "initialization": prepared["initialization_report"],
+        "training_capacity_eligibility": prepared[
+            "training_capacity_eligibility"
+        ],
         "background_view_capacity_audit": prepared[
             "background_view_capacity_audit"
         ],
@@ -477,6 +500,9 @@ def train_set_expert(
             "pooling": "pretrained_cls_through_four_pretrained_blocks",
             "validation_view_count": 8,
             "pretrained_provenance": prepared["pretrained_provenance"],
+            "training_capacity_eligibility": prepared[
+                "training_capacity_eligibility"
+            ],
             "phase0_artifact_manifest_sha256": sha256_file(
                 prepared["phase0_dir"] / BASE_ARTIFACT_MANIFEST
             ),
@@ -513,7 +539,10 @@ def train_set_expert(
             "kind": "setv_background_set",
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "seed": seed,
-            "trained_on": "full candidate_train",
+            "trained_on": "capacity_eligible candidate_train",
+            "training_capacity_eligibility": prepared[
+                "training_capacity_eligibility"
+            ],
             "token_dropout": config["training"]["token_dropout"],
             "validation_views": 8,
             "validation_aggregation": "mean_raw_logits_once",

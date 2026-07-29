@@ -67,11 +67,39 @@ def validate_set_expert_config(config: dict[str, Any]) -> None:
         ("input", "use_dense_position_embeddings"): False,
         ("input", "training_crop_max_attempts"): 10,
         ("input", "training_crop_fallback"): (
-            "full_frame_aspect_fit_excluding_padding"
+            "best_of_canonical_and_full_frame"
         ),
         ("input", "evaluation_insufficient_view_fallback"): (
-            "full_frame_aspect_fit_excluding_padding"
+            "best_of_canonical_and_full_frame"
         ),
+        ("input", "training_capacity_ineligible_policy"): (
+            "exclude_from_auxiliary_expert"
+        ),
+        ("input", "training_capacity_census_job_id"): "22266",
+        ("input", "training_capacity_census_json_sha256"): (
+            "2963f2afb88f774cec37029fe24e3d6fa3d40c107c6e648787a56a28560a3274"
+        ),
+        ("input", "training_capacity_census_csv_sha256"): (
+            "1ae941d60ee1efc2ab0fe2c5e12b0efb43412a6c77ca427082242bb612a8f920"
+        ),
+        ("input", "training_capacity_expected_exclusions"): [
+            {
+                "sample_id": "4887",
+                "target": 1,
+                "canonical_capacity": 11,
+                "full_frame_capacity": 14,
+                "best_fixed_view": "full_frame",
+                "best_fixed_view_capacity": 14,
+            },
+            {
+                "sample_id": "6285",
+                "target": 0,
+                "canonical_capacity": 9,
+                "full_frame_capacity": 5,
+                "best_fixed_view": "canonical",
+                "best_fixed_view_capacity": 9,
+            },
+        ],
         ("training", "epochs"): 30,
         ("training", "optimizer"): "AdamW",
         ("training", "learning_rate"): 1e-4,

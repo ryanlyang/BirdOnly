@@ -20,19 +20,28 @@ is used only to decide which ViT-S/16 patch tokens are admitted:
 
 Random resized crops are valid only when they preserve the locked 16-token
 minimum. Training deterministically tries the original crop seed and up to
-nine derived retry seeds. If all ten crops are invalid, it fits the complete
-original frame inside 224-by-224 with its aspect ratio preserved. Letterbox
-padding is marked foreground/ineligible before dilation, so no retained token
-can contain artificial padding. Validation ordinarily uses the canonical
-center crop and uses the same full-frame fallback only when that view has
-fewer than 16 eligible tokens.
+nine derived retry seeds. If all ten crops are invalid, it evaluates two fixed
+views and uses the one with more eligible tokens: the canonical center crop or
+the complete aspect-preserving frame. Full-frame letterbox padding is marked
+foreground/ineligible before dilation, so no retained token can contain
+artificial padding. Validation uses the same deterministic fixed-view rule
+when the canonical view is below the floor.
 
-Before model construction, the complete candidate-train and biased-validation
-splits are audited. The audit records the canonical minimum and the sample IDs
-that require full-frame fallback, and proves that the effective view satisfies
-the minimum for every image. Neither foreground eligibility nor the token
-minimum is relaxed, no patch is duplicated, and no sample is discarded.
-Per-epoch metrics record attempted crops, rejected crops, and fallback counts.
+Before model construction, both candidate-train fixed views are measured.
+Images for which neither view reaches 16 tokens are excluded only from this
+auxiliary expert. Census job 22266 found two such images among 3,836:
+
+- sample `6285`: canonical 9, full-frame 5;
+- sample `4887`: canonical 11, full-frame 14.
+
+They remain in ERM candidate training and every other applicable experiment.
+The resulting set expert trains on 3,834 images. One exclusion belongs to each
+target class. Biased validation has no exclusion; its minimum best-view
+capacity is 24. Neither foreground eligibility nor the token minimum is
+relaxed, and no patch is duplicated. The checkpoint, smoke report, and final
+receipt persist the exclusion policy, counts, sample IDs, labels, and
+capacities. Per-epoch metrics record attempted crops, rejected crops, and
+canonical/full-frame fallback counts.
 
 The deterministic maximum-token cap and fixed-count dropout are implementation
 choices used to make a run exactly reproducible. Their seeds and resolved
@@ -104,7 +113,7 @@ The final auxiliary-expert checkpoint is saved. Intermediate expert
 checkpoints are not retained.
 
 Validation uses the canonical Phase 0 transform when it meets the cardinality
-floor, otherwise the audited full-frame transform, followed by eight
+floor, otherwise the higher-capacity audited fixed view, followed by eight
 deterministic token-dropout views. Raw logits are averaged across views once.
 The score artifact contains:
 

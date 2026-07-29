@@ -379,6 +379,18 @@ Require at least:
 min_background_tokens = 16
 ```
 
+Before training this auxiliary expert, measure each `candidate_train` image
+under the canonical and full-frame fixed views. Exclude an image from this
+auxiliary expert only when neither view provides 16 eligible patches. The
+capacity census froze two exclusions, sample IDs `4887` and `6285`, from
+3,836 candidate-training images. This exclusion does not alter ERM candidate
+training or any other expert. Persist both exclusions and their capacities.
+
+Random training crops still require 16 eligible tokens. After ten rejected
+crops, use whichever of the canonical and full-frame fixed views has more
+eligible patches. Do not lower the floor, duplicate patches, or admit
+foreground-contaminated patches.
+
 #### Token representation
 
 Each token receives:
