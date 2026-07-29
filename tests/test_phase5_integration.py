@@ -131,6 +131,12 @@ class Phase5IntegrationTests(unittest.TestCase):
                     model_factory=lambda unused: TinyCandidate(),
                 )
                 self.assertIsNone(smoke["test_metrics"])
+                self.assertGreater(
+                    smoke["train"]["train_optimizer_step_count"], 0
+                )
+                self.assertEqual(
+                    smoke["train"]["train_amp_skipped_step_count"], 0
+                )
                 candidate_dir = train_candidate(
                     config, model_factory=lambda unused: TinyCandidate()
                 )

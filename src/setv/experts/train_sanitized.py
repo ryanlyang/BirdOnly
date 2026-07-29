@@ -35,6 +35,7 @@ from setv.experts.train_object import (
     _device,
     _grad_scaler,
     _load_phase0_config,
+    _step_optimizer_and_scheduler,
     _source_root,
     _write_csv_atomic,
 )
@@ -197,6 +198,8 @@ def _train_epoch(
     correct = 0
     view_count = 0
     sample_count = 0
+    optimizer_step_count = 0
+    amp_skipped_step_count = 0
     started = time.monotonic()
     for batch in loader:
         image_a = batch["image_a"].to(device, non_blocking=True)
@@ -217,9 +220,14 @@ def _train_epoch(
             )
             loss = ce + lambda_consistency * symmetric_kl
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
+        if _step_optimizer_and_scheduler(
+            scaler=scaler,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        ):
+            optimizer_step_count += 1
+        else:
+            amp_skipped_step_count += 1
         batch_size = int(targets.numel())
         total_sum += float(loss.detach()) * batch_size
         ce_sum += float(ce.detach()) * batch_size
@@ -228,12 +236,16 @@ def _train_epoch(
         correct += int((logits_b.detach().argmax(dim=1) == targets).sum())
         view_count += 2 * batch_size
         sample_count += batch_size
+    if optimizer_step_count == 0:
+        raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
         "train_loss": total_sum / sample_count,
         "train_cross_entropy": ce_sum / sample_count,
         "train_symmetric_kl": consistency_sum / sample_count,
         "train_view_accuracy": correct / view_count,
         "train_sample_count": sample_count,
+        "train_optimizer_step_count": optimizer_step_count,
+        "train_amp_skipped_step_count": amp_skipped_step_count,
         "epoch_seconds": time.monotonic() - started,
         "learning_rate": float(optimizer.param_groups[0]["lr"]),
     }

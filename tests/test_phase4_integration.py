@@ -128,6 +128,8 @@ class Phase4IntegrationTests(unittest.TestCase):
                 model_factory=lambda unused: TinySetModel(),
             )
             self.assertEqual(smoke["status"], "passed")
+            self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
+            self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             set_dir = train_set_expert(
                 set_config, model_factory=lambda unused: TinySetModel()
             )

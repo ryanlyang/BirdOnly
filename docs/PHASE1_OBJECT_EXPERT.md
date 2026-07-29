@@ -15,6 +15,12 @@ in raw RGB space with `(0, 255, 0)`. Normalization happens afterward.
 There is no expert-calibration split, temperature scaling, or calibrated
 probability in the primary pipeline.
 
+CUDA mixed-precision training advances the learning-rate scheduler only after
+`GradScaler` applies the corresponding optimizer update. If non-finite
+gradients cause `GradScaler` to skip an update, the scheduler waits. Every
+epoch records `train_optimizer_step_count` and
+`train_amp_skipped_step_count` in both the CSV metrics and event log.
+
 ## Gate
 
 Training refuses to start unless:

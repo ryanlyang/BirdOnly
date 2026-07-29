@@ -143,6 +143,25 @@ def _grad_scaler(device, enabled: bool):
         return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
+def _step_optimizer_and_scheduler(*, scaler, optimizer, scheduler) -> bool:
+    """Advance the scheduler only when GradScaler applies the optimizer update.
+
+    GradScaler silently skips ``optimizer.step()`` when it detects non-finite
+    gradients. A scale decrease after ``update()`` is the public indication
+    that this happened. Advancing the scheduler on such a batch puts the
+    learning-rate schedule ahead of the model updates and triggers PyTorch's
+    scheduler-order warning when the first update is skipped.
+    """
+
+    scale_before = float(scaler.get_scale())
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer_step_applied = float(scaler.get_scale()) >= scale_before
+    if optimizer_step_applied:
+        scheduler.step()
+    return optimizer_step_applied
+
+
 def _build_optimizer_scheduler(model, config: dict[str, Any], steps_per_epoch: int):
     import torch
 
@@ -186,6 +205,8 @@ def _train_epoch(
     loss_sum = 0.0
     correct = 0
     sample_count = 0
+    optimizer_step_count = 0
+    amp_skipped_step_count = 0
     started = time.monotonic()
     for batch in loader:
         images = batch["image"].to(device, non_blocking=True)
@@ -195,17 +216,26 @@ def _train_epoch(
             logits = model(images)
             loss = criterion(logits, targets)
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
+        if _step_optimizer_and_scheduler(
+            scaler=scaler,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        ):
+            optimizer_step_count += 1
+        else:
+            amp_skipped_step_count += 1
         batch_size = int(targets.numel())
         loss_sum += float(loss.detach()) * batch_size
         correct += int((logits.detach().argmax(dim=1) == targets).sum())
         sample_count += batch_size
+    if optimizer_step_count == 0:
+        raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
         "train_loss": loss_sum / sample_count,
         "train_accuracy": correct / sample_count,
         "train_sample_count": sample_count,
+        "train_optimizer_step_count": optimizer_step_count,
+        "train_amp_skipped_step_count": amp_skipped_step_count,
         "epoch_seconds": time.monotonic() - started,
         "learning_rate": float(optimizer.param_groups[0]["lr"]),
     }

@@ -39,6 +39,7 @@ from setv.experts.train_object import (
     _build_optimizer_scheduler,
     _grad_scaler,
     _load_phase0_config,
+    _step_optimizer_and_scheduler,
     _source_root,
 )
 from setv.phase0 import APPROVAL_RECEIPT, BASE_ARTIFACT_MANIFEST, verify_phase0
@@ -152,6 +153,8 @@ def _train_epoch(
     total_loss = 0.0
     correct = 0
     count = 0
+    optimizer_step_count = 0
+    amp_skipped_step_count = 0
     started = time.monotonic()
     for batch in loader:
         images = batch["image"].to(device, non_blocking=True)
@@ -161,17 +164,26 @@ def _train_epoch(
             logits = model(images)
             loss = criterion(logits, targets)
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
+        if _step_optimizer_and_scheduler(
+            scaler=scaler,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        ):
+            optimizer_step_count += 1
+        else:
+            amp_skipped_step_count += 1
         size = int(targets.numel())
         total_loss += float(loss.detach()) * size
         correct += int((logits.detach().argmax(1) == targets).sum())
         count += size
+    if optimizer_step_count == 0:
+        raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
         "train_loss": total_loss / count,
         "train_accuracy": correct / count,
         "train_sample_count": count,
+        "train_optimizer_step_count": optimizer_step_count,
+        "train_amp_skipped_step_count": amp_skipped_step_count,
         "learning_rate": float(optimizer.param_groups[0]["lr"]),
         "epoch_seconds": time.monotonic() - started,
     }

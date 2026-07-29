@@ -137,6 +137,8 @@ class Phase3IntegrationTests(unittest.TestCase):
                 model_factory=lambda unused: TinyModel(),
             )
             self.assertEqual(smoke["status"], "passed")
+            self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
+            self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             sanitized_dir = train_sanitized_expert(
                 expert_config, model_factory=lambda unused: TinyModel()
             )

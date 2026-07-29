@@ -79,6 +79,8 @@ class ObjectTrainingTests(unittest.TestCase):
             )
             self.assertEqual(smoke["status"], "passed")
             self.assertEqual(smoke["train"]["train_sample_count"], 32)
+            self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
+            self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             self.assertEqual(smoke["biased_val"]["biased_val_sample_count"], 8)
             self.assertTrue(smoke_report.is_file())
 

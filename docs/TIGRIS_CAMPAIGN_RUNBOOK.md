@@ -147,6 +147,10 @@ bash scripts/submit_phase1_object.sh
 ```
 
 The one-epoch GH200 smoke must pass before the 20-epoch job runs.
+Inspect its `train_optimizer_step_count` and
+`train_amp_skipped_step_count`. A dynamic-loss-scaling skip is retained as an
+auditable metric, and the learning-rate scheduler advances only on applied
+optimizer updates.
 
 ### Phases 2–4: background experts and fusion
 

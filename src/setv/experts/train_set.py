@@ -34,6 +34,7 @@ from setv.experts.train_object import (
     _device,
     _grad_scaler,
     _load_phase0_config,
+    _step_optimizer_and_scheduler,
     _source_root,
     _write_csv_atomic,
 )
@@ -195,6 +196,8 @@ def _train_epoch(
     loss_sum = 0.0
     correct = 0
     sample_count = 0
+    optimizer_step_count = 0
+    amp_skipped_step_count = 0
     retained_counts = []
     valid_counts = []
     started = time.monotonic()
@@ -207,19 +210,28 @@ def _train_epoch(
             logits = model(images, token_mask)
             loss = criterion(logits, targets)
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
+        if _step_optimizer_and_scheduler(
+            scaler=scaler,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        ):
+            optimizer_step_count += 1
+        else:
+            amp_skipped_step_count += 1
         batch_size = int(targets.numel())
         loss_sum += float(loss.detach()) * batch_size
         correct += int((logits.detach().argmax(dim=1) == targets).sum())
         sample_count += batch_size
         retained_counts.extend(batch["retained_after_dropout"].numpy().tolist())
         valid_counts.extend(batch["valid_after_cap"].numpy().tolist())
+    if optimizer_step_count == 0:
+        raise DataValidationError("AMP skipped every optimizer update in the epoch")
     return {
         "train_loss": loss_sum / sample_count,
         "train_accuracy": correct / sample_count,
         "train_sample_count": sample_count,
+        "train_optimizer_step_count": optimizer_step_count,
+        "train_amp_skipped_step_count": amp_skipped_step_count,
         "train_valid_tokens_after_cap_mean": float(np.mean(valid_counts)),
         "train_retained_tokens_mean": float(np.mean(retained_counts)),
         "train_retained_tokens_minimum": int(np.min(retained_counts)),

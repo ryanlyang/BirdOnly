@@ -94,6 +94,8 @@ class Phase2IntegrationTests(unittest.TestCase):
                 model_factory=lambda unused: TinyModel(),
             )
             self.assertEqual(smoke["status"], "passed")
+            self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
+            self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             exact_dir = train_exact_expert(
                 exact_config, model_factory=lambda unused: TinyModel()
             )
