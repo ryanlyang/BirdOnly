@@ -120,6 +120,30 @@ def validate_campaign_manifest(manifest: dict[str, Any]) -> None:
             )
     if manifest.get("ula", {}).get("method_label") != "uLA-style":
         raise ConfigurationError("Campaign uLA method label must be uLA-style")
+    if (
+        manifest.get("masks", {}).get("mapping_mode")
+        != "weclip_flattened_relative_stem"
+    ):
+        raise ConfigurationError(
+            "Campaign must use the generating WeCLIP+ flattened-stem mapping"
+        )
+    if (
+        float(manifest.get("masks", {}).get("threshold_normalized", -1.0))
+        != 1.0 / 255.0
+    ):
+        raise ConfigurationError(
+            "Campaign mask threshold must preserve nonzero WeCLIP+ labels"
+        )
+    if manifest.get("masks", {}).get("format") != "voc_colormap_class_ids":
+        raise ConfigurationError(
+            "Campaign masks must use exact VOC colormap class-ID decoding"
+        )
+    if manifest.get("masks", {}).get("foreground_class_ids") != [1]:
+        raise ConfigurationError("Campaign foreground_class_ids must be [1]")
+    if manifest.get("masks", {}).get("required_official_splits") != [0, 1]:
+        raise ConfigurationError("Campaign masks must require official splits 0 and 1")
+    if manifest.get("masks", {}).get("optional_official_splits") != [2]:
+        raise ConfigurationError("Campaign official test masks must remain optional")
 
 
 def campaign_environment(manifest: dict[str, Any]) -> dict[str, str]:
@@ -477,6 +501,24 @@ def run_campaign_preflight(
             config_mismatches.append("data.dataset_root")
         if data["masks"]["root"] != manifest["paths"]["mask_root"]:
             config_mismatches.append("data.mask_root")
+        if (
+            data["masks"]["mapping_mode"]
+            != manifest["masks"]["mapping_mode"]
+        ):
+            config_mismatches.append("data.masks.mapping_mode")
+        if (
+            float(data["masks"]["threshold_normalized"])
+            != float(manifest["masks"]["threshold_normalized"])
+        ):
+            config_mismatches.append("data.masks.threshold_normalized")
+        for key in (
+            "format",
+            "foreground_class_ids",
+            "required_official_splits",
+            "optional_official_splits",
+        ):
+            if data["masks"].get(key) != manifest["masks"].get(key):
+                config_mismatches.append(f"data.masks.{key}")
     checks.append(
         _check(
             "manifest_config_alignment",

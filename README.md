@@ -20,7 +20,8 @@ Phase 0 provides:
 - immutable joint-group-stratified inner splits;
 - selector-safe manifests that omit per-sample place/group labels;
 - a separately stored analysis-only protected-label manifest;
-- strict VLM-mask discovery, alignment, thresholding, and coverage checks;
+- strict VLM-mask discovery, exact VOC decoding, alignment, and
+  protocol-aware coverage checks;
 - deterministic visual mask-audit sheets and a hash-bound approval receipt;
 - joint image-mask transforms;
 - configuration, structured logging, hashing, and provenance capture;

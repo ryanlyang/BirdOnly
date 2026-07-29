@@ -14,7 +14,11 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from setv.data.audit import render_contact_sheets, select_visual_audit_samples
+from setv.data.audit import (
+    render_contact_sheets,
+    render_preflight_galleries,
+    select_visual_audit_samples,
+)
 from setv.data.masks import MaskResolver, inspect_mask
 from setv.data.splits import SAFE_COLUMNS, build_splits, read_and_validate_metadata
 from setv.errors import ArtifactExistsError, DataValidationError
@@ -98,7 +102,15 @@ def build_phase0(config: dict[str, Any]) -> Path:
         mask_records: list[dict[str, Any]] = []
         mapping_rules: Counter[str] = Counter()
         resolved_by_id: dict[str, str] = {}
-        for row_number, row in enumerate(metadata.itertuples(index=False), start=1):
+        required_official_splits = {
+            int(value) for value in mask_config["required_official_splits"]
+        }
+        required_metadata = metadata[
+            metadata["official_split"].isin(required_official_splits)
+        ].reset_index(drop=True)
+        for row_number, row in enumerate(
+            required_metadata.itertuples(index=False), start=1
+        ):
             resolved = resolver.resolve(row.img_filename, row.sample_id)
             details = inspect_mask(
                 dataset_root / row.img_filename,
@@ -111,6 +123,11 @@ def build_phase0(config: dict[str, Any]) -> Path:
                 ),
                 maximum_foreground_fraction=float(
                     mask_config["maximum_foreground_fraction"]
+                ),
+                map_format=str(mask_config.get("format", "threshold")),
+                foreground_class_ids=tuple(
+                    int(value)
+                    for value in mask_config.get("foreground_class_ids", [1])
                 ),
             )
             mapping_rules[resolved.mapping_rule] += 1
@@ -129,10 +146,12 @@ def build_phase0(config: dict[str, Any]) -> Path:
                 logger.log(
                     "mask_validation_progress",
                     validated=row_number,
-                    total=int(len(metadata)),
+                    total=int(len(required_metadata)),
                 )
-        if len(resolved_by_id) != len(metadata):
-            raise DataValidationError("Mask resolution did not cover all metadata rows")
+        if len(resolved_by_id) != len(required_metadata):
+            raise DataValidationError(
+                "Mask resolution did not cover all required train/validation rows"
+            )
         logger.log(
             "masks_validated",
             resolved_count=len(mask_records),
@@ -143,10 +162,12 @@ def build_phase0(config: dict[str, Any]) -> Path:
         for split_name, frame in split_result.safe_manifests.items():
             frame = frame.copy()
             frame["mask_relative_path"] = frame["sample_id"].map(resolved_by_id)
-            if frame["mask_relative_path"].isna().any():
+            requires_masks = split_name != "test"
+            if requires_masks and frame["mask_relative_path"].isna().any():
                 raise DataValidationError(
                     f"Resolved mask path missing from {split_name} manifest"
                 )
+            frame["mask_relative_path"] = frame["mask_relative_path"].fillna("")
             if list(frame.columns) != SAFE_COLUMNS:
                 raise DataValidationError(
                     f"Unsafe or unexpected columns in {split_name}: "
@@ -178,6 +199,9 @@ def build_phase0(config: dict[str, Any]) -> Path:
         write_json(staging / "splits" / "split_summary.json", split_summary)
 
         mask_frame = pd.DataFrame(mask_records)
+        color_counts: Counter[str] = Counter()
+        for details in mask_records:
+            color_counts.update(details["source_rgb_color_counts"])
         mask_summary = {
             "source": "VLM-generated segmentation masks",
             "authoritative_for_pilot": True,
@@ -187,6 +211,17 @@ def build_phase0(config: dict[str, Any]) -> Path:
             "mapping_rule_counts": dict(mapping_rules),
             "indexed_mask_file_count": resolver.total_mask_files,
             "mapped_sample_count": len(mask_records),
+            "required_official_splits": sorted(required_official_splits),
+            "mask_optional_official_splits": [
+                int(value)
+                for value in mask_config["optional_official_splits"]
+            ],
+            "map_format": str(mask_config.get("format", "threshold")),
+            "foreground_class_ids": [
+                int(value)
+                for value in mask_config.get("foreground_class_ids", [1])
+            ],
+            "source_rgb_color_pixel_counts": dict(sorted(color_counts.items())),
             "threshold_normalized": float(mask_config["threshold_normalized"]),
             "foreground_is_high": bool(mask_config["foreground_is_high"]),
             "require_same_dimensions": bool(mask_config["require_same_dimensions"]),
@@ -216,7 +251,25 @@ def build_phase0(config: dict[str, Any]) -> Path:
             foreground_is_high=bool(mask_config["foreground_is_high"]),
             columns=int(audit_config["contact_sheet_columns"]),
             thumbnail_size=int(audit_config["thumbnail_size"]),
+            map_format=str(mask_config.get("format", "threshold")),
+            foreground_class_ids=tuple(
+                int(value)
+                for value in mask_config.get("foreground_class_ids", [1])
+            ),
         )
+        green_view_galleries = render_preflight_galleries(
+            audit_samples,
+            config=config,
+            output_dir=staging / "mask_audit" / "green_view_galleries",
+            samples_per_page=8,
+            thumbnail_size=160,
+        )
+        for page in green_view_galleries:
+            page["path"] = (
+                Path(page["path"])
+                .relative_to(staging / "mask_audit")
+                .as_posix()
+            )
         write_json(
             staging / "mask_audit" / "visual_review_pending.json",
             {
@@ -225,15 +278,22 @@ def build_phase0(config: dict[str, Any]) -> Path:
                     "bird foreground is covered accurately",
                     "most background is excluded from the foreground mask",
                     "image and mask are spatially aligned",
-                    "no split shows a systematic mapping or polarity error",
+                    "no required mask split shows a systematic mapping or polarity error",
+                    "object view preserves the bird on an exact green background",
+                    "exact-background view greens the dilated bird region only",
                 ],
                 "sample_count_per_split": int(
                     audit_config["visual_samples_per_split"]
                 ),
                 "contact_sheets": contact_sheets,
+                "green_view_galleries": green_view_galleries,
             },
         )
-        logger.log("visual_audit_generated", contact_sheets=contact_sheets)
+        logger.log(
+            "visual_audit_generated",
+            contact_sheets=contact_sheets,
+            green_view_galleries=green_view_galleries,
+        )
 
         snapshot = {
             key: value for key, value in config.items() if key != "_config_path"
@@ -288,6 +348,17 @@ def approve_visual_audit(
     pending_path = root / "mask_audit" / "visual_review_pending.json"
     with pending_path.open("r", encoding="utf-8") as handle:
         pending = json.load(handle)
+    pending_galleries = pending.get("green_view_galleries")
+    if not isinstance(pending_galleries, list) or not pending_galleries:
+        raise DataValidationError(
+            "Phase 0 green-view galleries are missing from the visual gate"
+        )
+    gallery_splits = {item.get("split_name") for item in pending_galleries}
+    expected_gallery_splits = {"candidate_train", "biased_val", "oracle_val"}
+    if gallery_splits != expected_gallery_splits:
+        raise DataValidationError(
+            "Phase 0 green-view galleries do not cover every mask-required split"
+        )
     contact_sheets = []
     for item in pending["contact_sheets"]:
         path = root / "mask_audit" / item["path"]
@@ -297,6 +368,24 @@ def approve_visual_audit(
                 "path": path.relative_to(root).as_posix(),
                 "sha256": sha256_file(path),
                 "sample_count": item["sample_count"],
+            }
+        )
+    green_view_galleries = []
+    for item in pending_galleries:
+        path = root / "mask_audit" / item["path"]
+        green_view_galleries.append(
+            {
+                "split_name": item["split_name"],
+                "page": item["page"],
+                "path": path.relative_to(root).as_posix(),
+                "sha256": sha256_file(path),
+                "sample_count": item["sample_count"],
+                "sample_ids": item["sample_ids"],
+                "views": item["views"],
+                "green_rgb": item["green_rgb"],
+                "exact_dilation_pixels_at_224": (
+                    item["exact_dilation_pixels_at_224"]
+                ),
             }
         )
     receipt = {
@@ -309,9 +398,12 @@ def approve_visual_audit(
             "most_background_excluded": True,
             "spatial_alignment_accurate": True,
             "no_systematic_split_mapping_or_polarity_error": True,
+            "object_green_background_composition_accurate": True,
+            "exact_background_green_bird_composition_accurate": True,
         },
         "base_artifact_manifest_sha256": sha256_file(root / BASE_ARTIFACT_MANIFEST),
         "contact_sheets": contact_sheets,
+        "green_view_galleries": green_view_galleries,
     }
     destination = root / APPROVAL_RECEIPT
     if destination.exists():
@@ -366,11 +458,31 @@ def verify_phase0(phase0_dir: str | Path, *, require_approval: bool = True) -> d
             raise DataValidationError(
                 "Visual audit approval does not match the base artifact manifest"
             )
+        approved_galleries = approval.get("green_view_galleries")
+        if (
+            not isinstance(approved_galleries, list)
+            or {item.get("split_name") for item in approved_galleries}
+            != {
+                "candidate_train",
+                "biased_val",
+                "oracle_val",
+            }
+        ):
+            raise DataValidationError(
+                "Visual approval does not cover all green-view galleries"
+            )
         for sheet in approval.get("contact_sheets", []):
             path = root / sheet["path"]
             if not path.is_file() or sha256_file(path) != sheet["sha256"]:
                 raise DataValidationError(
                     f"Approved contact sheet is missing or changed: {sheet['path']}"
+                )
+        for page in approved_galleries:
+            path = root / page["path"]
+            if not path.is_file() or sha256_file(path) != page["sha256"]:
+                raise DataValidationError(
+                    "Approved green-view gallery is missing or changed: "
+                    f"{page['path']}"
                 )
     return {
         "status": "phase0_complete" if approval is not None else "automated_checks_passed",

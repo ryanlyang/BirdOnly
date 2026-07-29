@@ -29,6 +29,14 @@ class Phase0IntegrationTests(unittest.TestCase):
 
             pending = verify_phase0(output, require_approval=False)
             self.assertEqual(pending["status"], "automated_checks_passed")
+            visual_pending = json.loads(
+                (
+                    output / "mask_audit" / "visual_review_pending.json"
+                ).read_text()
+            )
+            self.assertEqual(len(visual_pending["green_view_galleries"]), 3)
+            for page in visual_pending["green_view_galleries"]:
+                self.assertTrue((output / "mask_audit" / page["path"]).is_file())
             with self.assertRaisesRegex(DataValidationError, "approval is missing"):
                 verify_phase0(output)
 
@@ -52,6 +60,10 @@ class Phase0IntegrationTests(unittest.TestCase):
             self.assertEqual(
                 verified["visual_review"]["reviewer"], "fixture reviewer"
             )
+            self.assertEqual(
+                len(verified["visual_review"]["green_view_galleries"]),
+                3,
+            )
 
             with self.assertRaises(ArtifactExistsError):
                 build_phase0(config)
@@ -69,7 +81,24 @@ class Phase0IntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(DataValidationError, "changed"):
                 verify_phase0(output, require_approval=False)
 
+    def test_build_does_not_require_official_test_masks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset, masks = create_fixture(root)
+            output = root / "phase0"
+            # Fixture sample 12 belongs to official split 2.
+            (masks / "bird_0012.png").unlink()
+            build_phase0(fixture_config(dataset, masks, output))
+            test_manifest = pd.read_csv(
+                output / "splits" / "waterbirds95_test.csv",
+                keep_default_na=False,
+            )
+            self.assertTrue((test_manifest["mask_relative_path"] == "").all())
+            mask_manifest = pd.read_csv(
+                output / "masks" / "vlm_mask_manifest.csv"
+            )
+            self.assertEqual(len(mask_manifest), 48)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import posixpath
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,11 +64,20 @@ class MaskResolver:
             )
         return paths[0] if paths else None
 
+    @staticmethod
+    def weclip_flattened_stem(image_filename: str) -> str:
+        """Return the image ID used by the Waterbirds WeCLIP+ generator."""
+        normalized = str(image_filename).strip().replace("\\", "/").lstrip("/")
+        without_extension = posixpath.splitext(normalized)[0]
+        flattened = without_extension.replace("/", "_")
+        return re.sub(r"[^A-Za-z0-9_-]+", "_", flattened).strip("_")
+
     def resolve(self, image_filename: str, sample_id: str) -> ResolvedMask:
         image = Path(str(image_filename))
         relative_key = image.with_suffix("").as_posix().casefold()
         basename_key = image.stem.casefold()
         sample_key = str(sample_id).casefold()
+        weclip_key = self.weclip_flattened_stem(image_filename).casefold()
 
         candidates: list[tuple[str, list[Path]]] = []
         if self.mapping_mode == "relative_stem":
@@ -82,6 +93,13 @@ class MaskResolver:
             )
         elif self.mapping_mode == "sample_id":
             candidates.append(("sample_id", self._basename.get(sample_key, [])))
+        elif self.mapping_mode == "weclip_flattened_relative_stem":
+            candidates.append(
+                (
+                    "weclip_flattened_relative_stem",
+                    self._basename.get(weclip_key, []),
+                )
+            )
         else:
             raise DataValidationError(f"Unsupported mapping mode: {self.mapping_mode}")
 
@@ -110,6 +128,8 @@ def inspect_mask(
     require_same_dimensions: bool,
     minimum_foreground_fraction: float,
     maximum_foreground_fraction: float,
+    map_format: str = "threshold",
+    foreground_class_ids: Iterable[int] = (1,),
 ) -> dict:
     image_path = Path(image_path)
     mask_path = Path(mask_path)
@@ -119,7 +139,15 @@ def inspect_mask(
             opened.verify()
         with Image.open(mask_path) as opened:
             mask_size = opened.size
+            raw_rgb = np.asarray(opened.convert("RGB"), dtype=np.uint8)
             raw = np.asarray(opened.convert("L"), dtype=np.uint8)
+            binary = binarize_mask(
+                opened,
+                threshold_normalized=threshold_normalized,
+                foreground_is_high=foreground_is_high,
+                map_format=map_format,
+                foreground_class_ids=foreground_class_ids,
+            )
     except (OSError, ValueError) as exc:
         raise DataValidationError(
             f"Could not read image/mask pair {image_path} / {mask_path}: {exc}"
@@ -131,11 +159,6 @@ def inspect_mask(
             f"mask={mask_path} {mask_size}"
         )
 
-    binary = binarize_mask(
-        Image.fromarray(raw, mode="L"),
-        threshold_normalized=threshold_normalized,
-        foreground_is_high=foreground_is_high,
-    )
     binary_array = np.asarray(binary, dtype=np.uint8) > 0
     fraction = float(binary_array.mean())
     if not minimum_foreground_fraction <= fraction <= maximum_foreground_fraction:
@@ -147,6 +170,9 @@ def inspect_mask(
 
     raw_unique = np.unique(raw)
     is_binary_source = bool(set(raw_unique.tolist()).issubset({0, 1, 255}))
+    unique_rgb, rgb_counts = np.unique(
+        raw_rgb.reshape(-1, 3), axis=0, return_counts=True
+    )
     return {
         "image_width": image_size[0],
         "image_height": image_size[1],
@@ -155,8 +181,13 @@ def inspect_mask(
         "source_mask_binary": is_binary_source,
         "source_mask_min": int(raw.min()),
         "source_mask_max": int(raw.max()),
+        "source_rgb_color_counts": {
+            ",".join(str(int(channel)) for channel in color): int(count)
+            for color, count in zip(unique_rgb, rgb_counts, strict=True)
+        },
+        "map_format": map_format,
+        "foreground_class_ids": [int(value) for value in foreground_class_ids],
         "foreground_fraction": fraction,
         "mask_sha256": sha256_file(mask_path),
         "mask_size_bytes": mask_path.stat().st_size,
     }
-

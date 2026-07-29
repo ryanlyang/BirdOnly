@@ -56,6 +56,8 @@ receipt="${RECEIPT_DIR}/phase0_submission_${job_id}.txt"
   echo "config_sha256=$config_sha"
   echo "implementation_plan_sha256=$plan_sha"
   echo "handoff_sha256=$handoff_sha"
+  echo "expected_mask_mapping_audit=${SETV_CAMPAIGN_ROOT}/preflight/phase0_mask_mapping_job${job_id}.json"
+  echo "expected_mask_galleries=${SETV_CAMPAIGN_ROOT}/preflight/phase0_mask_galleries_job${job_id}"
 } > "$receipt"
 
 echo "Submitted Phase 0 job ${job_id}"

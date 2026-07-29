@@ -148,8 +148,50 @@ def binarize_mask(
     mask: Image.Image,
     threshold_normalized: float = 0.5,
     foreground_is_high: bool = True,
+    *,
+    map_format: str = "threshold",
+    foreground_class_ids: Iterable[int] = (1,),
 ) -> Image.Image:
-    """Convert any single-channel mask to an exact 0/255 binary PIL image."""
+    """Decode a source mask to an exact 0/255 binary PIL image.
+
+    ``voc_colormap_class_ids`` preserves the categorical RGB encoding and
+    rejects every color that is not in the Pascal/VOC palette. ``threshold``
+    remains available for legacy binary fixtures and non-categorical masks.
+    """
+    if map_format == "voc_colormap_class_ids":
+        rgb = np.asarray(mask.convert("RGB"), dtype=np.uint8)
+        packed = (
+            (rgb[..., 0].astype(np.uint32) << 16)
+            | (rgb[..., 1].astype(np.uint32) << 8)
+            | rgb[..., 2].astype(np.uint32)
+        )
+        palette = _voc_palette()
+        palette_packed = (
+            (palette[:, 0].astype(np.uint32) << 16)
+            | (palette[:, 1].astype(np.uint32) << 8)
+            | palette[:, 2].astype(np.uint32)
+        )
+        lookup = {int(color): class_id for class_id, color in enumerate(palette_packed)}
+        unique = np.unique(packed)
+        unknown = [int(color) for color in unique if int(color) not in lookup]
+        if unknown:
+            colors = [
+                [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+                for value in unknown[:10]
+            ]
+            raise DataValidationError(
+                f"Unexpected VOC colors in categorical mask: {colors}"
+            )
+        class_ids = np.empty(packed.shape, dtype=np.uint8)
+        for color in unique:
+            class_ids[packed == color] = lookup[int(color)]
+        selected = tuple(int(value) for value in foreground_class_ids)
+        if not selected or any(value < 0 or value > 255 for value in selected):
+            raise ValueError("foreground_class_ids must contain VOC IDs in [0, 255]")
+        foreground = np.isin(class_ids, np.asarray(selected, dtype=np.uint8))
+        return Image.fromarray(foreground.astype(np.uint8) * 255, mode="L")
+    if map_format != "threshold":
+        raise ValueError(f"Unsupported mask map_format: {map_format}")
     if not 0.0 <= threshold_normalized <= 1.0:
         raise ValueError("threshold_normalized must lie in [0, 1]")
     array = np.asarray(mask.convert("L"), dtype=np.float32) / 255.0
@@ -157,6 +199,19 @@ def binarize_mask(
     if not foreground_is_high:
         foreground = ~foreground
     return Image.fromarray((foreground.astype(np.uint8) * 255), mode="L")
+
+
+def _voc_palette() -> np.ndarray:
+    """Return the canonical 256-entry Pascal/VOC RGB palette."""
+    palette = np.zeros((256, 3), dtype=np.uint8)
+    for class_id in range(256):
+        value = class_id
+        for bit in range(8):
+            palette[class_id, 0] |= ((value >> 0) & 1) << (7 - bit)
+            palette[class_id, 1] |= ((value >> 1) & 1) << (7 - bit)
+            palette[class_id, 2] |= ((value >> 2) & 1) << (7 - bit)
+            value >>= 3
+    return palette
 
 
 def green_fill(
@@ -203,4 +258,3 @@ def build_train_transform(config: dict, seed: int) -> JointCompose:
             ),
         ]
     )
-

@@ -44,6 +44,8 @@ class WaterbirdsManifestDataset:
         *,
         threshold_normalized: float = 0.5,
         foreground_is_high: bool = True,
+        map_format: str = "threshold",
+        foreground_class_ids: tuple[int, ...] = (1,),
         transform: Callable | None = None,
     ):
         self.manifest_path = Path(manifest_csv)
@@ -51,6 +53,8 @@ class WaterbirdsManifestDataset:
         self.mask_root = Path(mask_root)
         self.threshold_normalized = threshold_normalized
         self.foreground_is_high = foreground_is_high
+        self.map_format = map_format
+        self.foreground_class_ids = foreground_class_ids
         self.transform = transform
         self.rows = pd.read_csv(self.manifest_path, dtype={"sample_id": str})
         forbidden = FORBIDDEN_SELECTOR_COLUMNS.intersection(self.rows.columns)
@@ -80,6 +84,8 @@ class WaterbirdsManifestDataset:
                 opened,
                 self.threshold_normalized,
                 self.foreground_is_high,
+                map_format=self.map_format,
+                foreground_class_ids=self.foreground_class_ids,
             )
         if image.size != mask.size:
             raise DataValidationError(
@@ -94,4 +100,3 @@ class WaterbirdsManifestDataset:
             mask=mask,
             target=int(row["y"]),
         )
-

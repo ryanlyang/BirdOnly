@@ -67,7 +67,90 @@ class MaskTests(unittest.TestCase):
             with self.assertRaisesRegex(DataValidationError, "No VLM mask"):
                 resolver.resolve("images/missing.jpg", "0")
 
+    def test_waterbirds_weclip_flattened_relative_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mask_name = (
+                "001_Black_footed_Albatross_"
+                "Black_Footed_Albatross_0046_18.png"
+            )
+            Image.new("L", (4, 4), 255).save(root / mask_name)
+            resolver = MaskResolver(
+                root,
+                [".png"],
+                "weclip_flattened_relative_stem",
+            )
+            resolved = resolver.resolve(
+                (
+                    "001.Black_footed_Albatross/"
+                    "Black_Footed_Albatross_0046_18.jpg"
+                ),
+                "1",
+            )
+            self.assertEqual(
+                resolved.mapping_rule,
+                "weclip_flattened_relative_stem",
+            )
+            self.assertEqual(resolved.relative_path, mask_name)
+            self.assertEqual(
+                MaskResolver.weclip_flattened_stem(
+                    r"001.Black_footed_Albatross\Black_Footed_Albatross_0046_18.jpg"
+                ),
+                (
+                    "001_Black_footed_Albatross_"
+                    "Black_Footed_Albatross_0046_18"
+                ),
+            )
+
+    def test_pascal_colorized_bird_label_uses_exact_voc_decode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image_path = root / "bird.jpg"
+            mask_path = root / "bird.png"
+            Image.new("RGB", (4, 4), (20, 30, 40)).save(image_path)
+            mask = Image.new("RGB", (4, 4), (0, 0, 0))
+            for x in range(2):
+                for y in range(2):
+                    mask.putpixel((x, y), (128, 0, 0))
+            mask.save(mask_path)
+            details = inspect_mask(
+                image_path,
+                mask_path,
+                threshold_normalized=1.0 / 255.0,
+                foreground_is_high=True,
+                require_same_dimensions=True,
+                minimum_foreground_fraction=0.001,
+                maximum_foreground_fraction=0.95,
+                map_format="voc_colormap_class_ids",
+                foreground_class_ids=(1,),
+            )
+            self.assertAlmostEqual(details["foreground_fraction"], 0.25)
+            self.assertFalse(details["source_mask_binary"])
+            self.assertEqual(
+                details["source_rgb_color_counts"],
+                {"0,0,0": 12, "128,0,0": 4},
+            )
+
+    def test_pascal_decoder_rejects_binary_white_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image_path = root / "bird.jpg"
+            mask_path = root / "bird.png"
+            Image.new("RGB", (4, 4), (20, 30, 40)).save(image_path)
+            Image.new("L", (4, 4), 255).save(mask_path)
+            with self.assertRaisesRegex(DataValidationError, "Unexpected VOC colors"):
+                inspect_mask(
+                    image_path,
+                    mask_path,
+                    threshold_normalized=1.0 / 255.0,
+                    foreground_is_high=True,
+                    require_same_dimensions=True,
+                    minimum_foreground_fraction=0.001,
+                    maximum_foreground_fraction=0.95,
+                    map_format="voc_colormap_class_ids",
+                    foreground_class_ids=(1,),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
-

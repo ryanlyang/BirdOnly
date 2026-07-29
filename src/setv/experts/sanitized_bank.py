@@ -64,6 +64,10 @@ def _dataset(phase0_dir: Path, phase0_config: dict, split: str):
         masks["root"],
         threshold_normalized=float(masks["threshold_normalized"]),
         foreground_is_high=bool(masks["foreground_is_high"]),
+        map_format=str(masks.get("format", "threshold")),
+        foreground_class_ids=tuple(
+            int(value) for value in masks.get("foreground_class_ids", [1])
+        ),
     )
 
 

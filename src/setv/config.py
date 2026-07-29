@@ -26,6 +26,10 @@ REQUIRED_PATHS = (
     ("data", "official_split_values", "test"),
     ("masks", "root"),
     ("masks", "mapping_mode"),
+    ("masks", "format"),
+    ("masks", "foreground_class_ids"),
+    ("masks", "required_official_splits"),
+    ("masks", "optional_official_splits"),
     ("masks", "threshold_normalized"),
     ("split", "candidate_train_fraction"),
     ("split", "seed"),
@@ -82,6 +86,7 @@ def _validate_values(config: Mapping[str, Any]) -> None:
         "unique_basename",
         "relative_stem_then_unique_basename",
         "sample_id",
+        "weclip_flattened_relative_stem",
     }
     if mapping_mode not in supported:
         raise ConfigurationError(
@@ -89,9 +94,35 @@ def _validate_values(config: Mapping[str, Any]) -> None:
             f"expected one of {sorted(supported)}"
         )
 
+    map_format = str(config["masks"]["format"])
+    if map_format not in {"threshold", "voc_colormap_class_ids"}:
+        raise ConfigurationError(f"Unsupported masks.format={map_format!r}")
+    foreground_class_ids = config["masks"]["foreground_class_ids"]
+    if (
+        not isinstance(foreground_class_ids, list)
+        or not foreground_class_ids
+        or any(
+            not isinstance(value, int) or value < 0 or value > 255
+            for value in foreground_class_ids
+        )
+    ):
+        raise ConfigurationError(
+            "masks.foreground_class_ids must be a nonempty list of IDs in [0, 255]"
+        )
+
     split_values = config["data"]["official_split_values"]
     if len(set(split_values.values())) != 3:
         raise ConfigurationError("Official split values must be distinct")
+    required_mask_splits = config["masks"]["required_official_splits"]
+    optional_mask_splits = config["masks"]["optional_official_splits"]
+    if required_mask_splits != [split_values["train"], split_values["oracle_val"]]:
+        raise ConfigurationError(
+            "masks.required_official_splits must be [train, oracle_val]"
+        )
+    if optional_mask_splits != [split_values["test"]]:
+        raise ConfigurationError(
+            "masks.optional_official_splits must contain only official test"
+        )
 
     samples = int(config["audit"]["visual_samples_per_split"])
     if samples < 20:
@@ -116,4 +147,3 @@ def apply_overrides(
     if output_dir is not None:
         result["output"]["phase0_dir"] = str(Path(output_dir).expanduser())
     return result
-

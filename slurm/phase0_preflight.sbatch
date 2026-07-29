@@ -52,6 +52,12 @@ test -f "$CONFIG"
 test -d /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
 test -d /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
 
+python -u scripts/audit_phase0_mask_mapping.py \
+  --config "$CONFIG" \
+  --report "/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/preflight/phase0_mask_mapping_job${SLURM_JOB_ID}.json" \
+  --gallery-dir "/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/preflight/phase0_mask_galleries_job${SLURM_JOB_ID}" \
+  --samples-per-split 24 \
+  --samples-per-page 8
 PYTHONPATH=src python -m unittest discover -s tests -v
 python -u scripts/build_phase0.py --config "$CONFIG"
 python -u scripts/verify_phase0.py \

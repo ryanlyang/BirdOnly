@@ -35,6 +35,15 @@ ula:
   external_official_ssl_checkpoint: null
   method_label: uLA-style
 
+masks:
+  mapping_mode: weclip_flattened_relative_stem
+  naming_source: generate_pseudo_masks_waterbirds._make_image_id
+  format: voc_colormap_class_ids
+  foreground_class_ids: [1]
+  threshold_normalized: 0.00392156862745098
+  required_official_splits: [0, 1]
+  optional_official_splits: [2]
+
 policy:
   minimum_candidate_seeds: 3
   clean_git_required: true

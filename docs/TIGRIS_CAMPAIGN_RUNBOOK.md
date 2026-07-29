@@ -89,6 +89,24 @@ prints, or copies reporting-only test metric values.
 bash scripts/submit_phase0.sh
 ```
 
+The job first writes
+`preflight/phase0_mask_mapping_job<JOB_ID>.json`. It requires a one-to-one
+mapping for every official train and validation row (splits 0 and 1) using the
+exact flattened relative-stem naming convention of the Waterbirds WeCLIP+
+generator. It also decodes every required PNG as an exact VOC categorical map,
+with foreground class 1. Official-test masks (split 2) are intentionally
+optional because test classification uses untouched images only. If required
+coverage or decoding is incomplete, inspect the report; do not switch map
+roots, merge teacher-map sources, or weaken the protocol.
+
+It also writes multiple lossless PNG pages under
+`preflight/phase0_mask_galleries_job<JOB_ID>/`. Inspect every page. Each sample
+row contains the original, red mask overlay, object-on-green view, and exact
+background-only view with the dilated bird region green. These are the actual
+evaluation geometry, threshold, polarity, green color, and exact-mask dilation
+used downstream. Pages cover candidate train, biased validation, and oracle
+validation. They intentionally do not expose or require test masks.
+
 Monitor:
 
 ```bash
@@ -101,6 +119,10 @@ When the build succeeds, inspect every contact sheet under:
 ```text
 /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0/mask_audit/
 ```
+
+This includes `green_view_galleries/`. Approval attests to both mask alignment
+and the exact green-screen compositions, so inspect every page before running
+the approval command.
 
 Then, and only then:
 
@@ -243,6 +265,9 @@ input is not an operational retry. Create a new campaign ID and output root.
 Special cases:
 
 - Phase 0 built but unapproved: inspect and approve; do not rebuild.
+- Phase 0 mask-mapping audit failed before publication: retain the audit
+  report. If the target `phase0/` directory is absent, a corrected clean
+  commit may retry the same campaign; record both submission receipts.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified

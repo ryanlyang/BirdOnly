@@ -32,9 +32,9 @@ def create_fixture(root: Path) -> tuple[Path, Path]:
         draw.rectangle((left, top, left + 10, top + 12), fill=(220, 30, 30))
         image.save(dataset_root / relative)
 
-        mask = Image.new("L", image.size, 0)
+        mask = Image.new("RGB", image.size, (0, 0, 0))
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rectangle((left, top, left + 10, top + 12), fill=255)
+        mask_draw.rectangle((left, top, left + 10, top + 12), fill=(128, 0, 0))
         mask.save(mask_root / f"bird_{sample_id:04d}.png")
         rows.append(
             {
@@ -77,7 +77,11 @@ def fixture_config(dataset_root: Path, mask_root: Path, output: Path) -> dict:
             "root": str(mask_root),
             "allowed_extensions": [".png"],
             "mapping_mode": "relative_stem_then_unique_basename",
-            "threshold_normalized": 0.5,
+            "format": "voc_colormap_class_ids",
+            "foreground_class_ids": [1],
+            "required_official_splits": [0, 1],
+            "optional_official_splits": [2],
+            "threshold_normalized": 1.0 / 255.0,
             "foreground_is_high": True,
             "require_same_dimensions": True,
             "minimum_foreground_fraction": 0.001,
@@ -99,4 +103,3 @@ def fixture_config(dataset_root: Path, mask_root: Path, output: Path) -> dict:
         },
         "output": {"phase0_dir": str(output)},
     }
-

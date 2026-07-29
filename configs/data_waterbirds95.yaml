@@ -16,13 +16,22 @@ data:
 
 masks:
   root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
-  allowed_extensions: [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"]
-  mapping_mode: relative_stem_then_unique_basename
-  threshold_normalized: 0.5
+  allowed_extensions: [".png"]
+  # The generating Waterbirds WeCLIP+ pipeline flattens the complete relative
+  # image stem and normalizes punctuation to underscores.
+  mapping_mode: weclip_flattened_relative_stem
+  # prediction_cmap is categorical Pascal/VOC: class 0 is black background
+  # and class 1 is RGB [128, 0, 0]. Preserve RGB and reject unknown colors.
+  format: voc_colormap_class_ids
+  foreground_class_ids: [1]
+  # Retained only for explicitly configured legacy threshold-format masks.
+  threshold_normalized: 0.00392156862745098
   foreground_is_high: true
   require_same_dimensions: true
   minimum_foreground_fraction: 0.001
   maximum_foreground_fraction: 0.95
+  required_official_splits: [0, 1]
+  optional_official_splits: [2]
 
 split:
   candidate_train_fraction: 0.8
@@ -43,4 +52,3 @@ audit:
 
 output:
   phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
-
