@@ -13,6 +13,11 @@ set -Eeuo pipefail
 : "${SETV_REPO:?missing SETV_REPO}"
 : "${SETV_MASK_SEED:?missing SETV_MASK_SEED}"
 : "${SETV_SANITIZED_SEED:?missing SETV_SANITIZED_SEED}"
+if [[ "${SETV_ALLOW_REJECTED_SANITIZED_BANK:-0}" == "1" ]]; then
+  override_args=(--allow-rejected-mask-bank)
+else
+  override_args=()
+fi
 
 ENV=/home/ryreu/miniforge3-aarch64/envs/fcv_gh200
 ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
@@ -32,5 +37,5 @@ srun --unbuffered python -u scripts/smoke_sanitized_expert.py \
   --config configs/expert_background_sanitized.yaml \
   --seed "$SETV_SANITIZED_SEED" \
   --mask-bank-dir "$BANK" \
-  --report "$REPORT"
-
+  --report "$REPORT" \
+  "${override_args[@]}"

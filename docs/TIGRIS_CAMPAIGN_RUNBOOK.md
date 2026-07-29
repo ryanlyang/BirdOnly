@@ -172,6 +172,19 @@ bootstrap interval must contain `0.50`. A rejected bank is evidence, not a
 failed file to erase. Do not submit sanitized-expert training by hand after a
 rejection.
 
+Campaign amendment: the project owner explicitly authorized the rejected bank
+from audit job 21917 as a diagnostic private-pilot signal. The audit remains
+failed and the branch is not sanitization-claim eligible. Reuse it only through
+the receipt-bound resume launcher:
+
+```bash
+bash scripts/submit_phase3_sanitized_diagnostic_resume.sh
+```
+
+This is not an acceptance override: it hash-verifies and reuses the existing
+bank, submits only the missing downstream jobs, and propagates the failure
+status through Phase 3, Phase 5, and Phase 6 artifacts.
+
 ### Phase 5: three candidate trajectories
 
 ```bash
@@ -298,7 +311,11 @@ Special cases:
   chooses the higher-capacity canonical/full-frame view after ten invalid
   crops. The smoke and final receipts must reproduce exactly two exclusions
   with one sample from each target class before production is accepted.
-- Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
+- Sanitized leakage rejection: retain the rejected bank and normally stop
+  Phase 3. For this campaign only, the locked project-owner amendment permits
+  the job-21917 bank to resume through
+  `submit_phase3_sanitized_diagnostic_resume.sh`; never use the ordinary
+  launcher or submit downstream jobs manually.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified
   official checkpoint.

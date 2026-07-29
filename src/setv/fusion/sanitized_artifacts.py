@@ -185,6 +185,26 @@ def build_sanitized_fusion_artifacts(config: dict[str, Any]) -> Path:
         },
         "hard_valid": fusion["hard_valid"],
         "logistic_available": logistic["available"],
+        "leakage_audit_accepted": bool(
+            sanitized_receipt["leakage_audit_accepted"]
+        ),
+        "rejected_bank_diagnostic_override_used": bool(
+            sanitized_receipt.get(
+                "rejected_bank_diagnostic_override_used", False
+            )
+        ),
+        "diagnostic_only": bool(
+            sanitized_receipt.get("diagnostic_only", False)
+        ),
+        "sanitization_claim_eligible": bool(
+            sanitized_receipt.get(
+                "sanitization_claim_eligible",
+                sanitized_receipt["leakage_audit_accepted"],
+            )
+        ),
+        "scientific_warnings": list(
+            sanitized_receipt.get("scientific_warnings", [])
+        ),
     }
     write_json(staging / "fusion_receipt.json", receipt)
     write_json(staging / "artifact_manifest.json", _artifact_manifest(staging))
@@ -218,6 +238,21 @@ def verify_sanitized_fusion_artifacts(path: str | Path) -> dict[str, Any]:
     sanitized_receipt = _load_json(
         sanitized_dir / "phase3_sanitized_receipt.json"
     )
+    for key in (
+        "leakage_audit_accepted",
+        "rejected_bank_diagnostic_override_used",
+        "diagnostic_only",
+        "sanitization_claim_eligible",
+        "scientific_warnings",
+    ):
+        expected = sanitized_receipt.get(
+            key,
+            [] if key == "scientific_warnings" else False,
+        )
+        if receipt.get(key, [] if key == "scientific_warnings" else False) != expected:
+            raise DataValidationError(
+                f"Sanitized fusion did not preserve expert {key}"
+            )
     if receipt["object_scores_sha256"] != sha256_file(
         object_dir / object_receipt["scores"]["path"]
     ):
@@ -243,6 +278,16 @@ def verify_sanitized_fusion_artifacts(path: str | Path) -> dict[str, Any]:
         "hard_valid": fusion["hard_valid"],
         "logistic_available": fusion["logistic"]["available"],
         "artifact_count": len(artifact["files"]),
+        "leakage_audit_accepted": bool(
+            receipt["leakage_audit_accepted"]
+        ),
+        "rejected_bank_diagnostic_override_used": bool(
+            receipt["rejected_bank_diagnostic_override_used"]
+        ),
+        "sanitization_claim_eligible": bool(
+            receipt["sanitization_claim_eligible"]
+        ),
+        "scientific_warnings": receipt["scientific_warnings"],
     }
 
 

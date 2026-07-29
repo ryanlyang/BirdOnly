@@ -21,6 +21,14 @@ def main() -> int:
     parser.add_argument("--report", required=True)
     parser.add_argument("--phase0-dir")
     parser.add_argument("--device", choices=("cuda", "cpu"))
+    parser.add_argument(
+        "--allow-rejected-mask-bank",
+        action="store_true",
+        help=(
+            "Diagnostic pilot override: train from a leakage-rejected bank "
+            "while preserving its failed status in every receipt."
+        ),
+    )
     args = parser.parse_args()
     config = load_sanitized_expert_config(
         args.config,
@@ -28,6 +36,7 @@ def main() -> int:
         phase0_dir=args.phase0_dir,
         mask_bank_dir=args.mask_bank_dir,
         device=args.device,
+        allow_rejected_mask_bank=args.allow_rejected_mask_bank,
     )
     print(json.dumps(run_sanitized_expert_smoke(config, args.report), indent=2))
     return 0
@@ -35,4 +44,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

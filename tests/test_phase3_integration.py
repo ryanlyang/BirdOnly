@@ -69,6 +69,29 @@ def accepted_fixture_audit(
     )
 
 
+def rejected_fixture_audit(
+    packed_masks, family_ids, width, sample_ids, labels, *, seed, config
+):
+    report, predictions = accepted_fixture_audit(
+        packed_masks,
+        family_ids,
+        width,
+        sample_ids,
+        labels,
+        seed=seed,
+        config=config,
+    )
+    report["accepted"] = False
+    report["auditors"] = {
+        "fixture": {
+            "heldout_mask_balanced_accuracy": 0.60,
+            "cluster_bootstrap_confidence_interval": [0.55, 0.65],
+            "accepted": False,
+        }
+    }
+    return report, predictions
+
+
 if TORCH_AVAILABLE:
 
     class TinyModel(torch.nn.Module):
@@ -102,9 +125,13 @@ class Phase3IntegrationTests(unittest.TestCase):
                 auditor_device="cpu",
             )
             bank_dir = build_sanitized_mask_bank(
-                bank_config, auditor_runner=accepted_fixture_audit
+                bank_config, auditor_runner=rejected_fixture_audit
             )
-            self.assertTrue(verify_sanitized_mask_bank(bank_dir)["accepted"])
+            self.assertFalse(
+                verify_sanitized_mask_bank(
+                    bank_dir, require_accepted=False
+                )["accepted"]
+            )
 
             object_config = load_object_expert_config(
                 ROOT / "configs" / "expert_object_green.yaml",
@@ -127,6 +154,7 @@ class Phase3IntegrationTests(unittest.TestCase):
                 mask_bank_dir=str(bank_dir),
                 output_root=str(root / "sanitized"),
                 device="cpu",
+                allow_rejected_mask_bank=True,
             )
             expert_config["training"].update(
                 {"num_workers": 0, "evaluation_batch_size": 4, "mixed_precision": False}
@@ -137,13 +165,23 @@ class Phase3IntegrationTests(unittest.TestCase):
                 model_factory=lambda unused: TinyModel(),
             )
             self.assertEqual(smoke["status"], "passed")
+            self.assertFalse(smoke["leakage_audit_accepted"])
+            self.assertTrue(
+                smoke["rejected_bank_diagnostic_override_used"]
+            )
+            self.assertFalse(smoke["sanitization_claim_eligible"])
             self.assertGreater(smoke["train"]["train_optimizer_step_count"], 0)
             self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             sanitized_dir = train_sanitized_expert(
                 expert_config, model_factory=lambda unused: TinyModel()
             )
-            self.assertEqual(
-                verify_sanitized_expert(sanitized_dir)["status"], "complete"
+            expert_verified = verify_sanitized_expert(sanitized_dir)
+            self.assertEqual(expert_verified["status"], "complete")
+            self.assertTrue(
+                expert_verified["rejected_bank_diagnostic_override_used"]
+            )
+            self.assertFalse(
+                expert_verified["sanitization_claim_eligible"]
             )
 
             fusion_config = load_sanitized_fusion_config(
@@ -158,6 +196,10 @@ class Phase3IntegrationTests(unittest.TestCase):
             fusion_dir = build_sanitized_fusion_artifacts(fusion_config)
             verified = verify_sanitized_fusion_artifacts(fusion_dir)
             self.assertEqual(verified["status"], "complete")
+            self.assertTrue(
+                verified["rejected_bank_diagnostic_override_used"]
+            )
+            self.assertFalse(verified["sanitization_claim_eligible"])
             fusion = load_fusion_artifacts(fusion_dir)
             candidate_path = root / "candidate.npz"
             logits = np.zeros((len(fusion["true_label"]), 2), dtype=np.float32)

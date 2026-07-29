@@ -108,6 +108,7 @@ def load_sanitized_expert_config(
     mask_bank_dir: str | None = None,
     output_root: str | None = None,
     device: str | None = None,
+    allow_rejected_mask_bank: bool | None = None,
 ) -> dict[str, Any]:
     config_path, config = _read(path)
     if seed is not None:
@@ -121,6 +122,10 @@ def load_sanitized_expert_config(
             config[key] = str(Path(value).expanduser())
     if device is not None:
         config["training"]["device"] = device
+    if allow_rejected_mask_bank is not None:
+        config["scientific_override"][
+            "allow_rejected_mask_bank_for_diagnostic_pilot"
+        ] = bool(allow_rejected_mask_bank)
     config["_config_path"] = str(config_path)
     validate_sanitized_expert_config(config)
     return config
@@ -135,6 +140,14 @@ def validate_sanitized_expert_config(config: dict[str, Any]) -> None:
         raise ConfigurationError("Sanitized-expert seed must be explicit")
     if not config.get("mask_bank_dir"):
         raise ConfigurationError("mask_bank_dir must be explicit")
+    override = config.get("scientific_override", {}).get(
+        "allow_rejected_mask_bank_for_diagnostic_pilot"
+    )
+    if not isinstance(override, bool):
+        raise ConfigurationError(
+            "scientific_override.allow_rejected_mask_bank_for_diagnostic_pilot "
+            "must be boolean"
+        )
     locked = {
         ("model", "architecture"): "vit_small_patch16_224",
         ("model", "pretrained"): True,

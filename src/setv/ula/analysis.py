@@ -433,6 +433,9 @@ def _derive_expert_metadata(
             ),
             "simplicity_rank": int(ranks[name]),
             "derivation": "verified_artifacts",
+            "leakage_gate_accepted": None,
+            "rejected_bank_diagnostic_override_used": False,
+            "sanitization_claim_eligible": None,
         }
         if scores is not None:
             stability_key = {
@@ -448,6 +451,19 @@ def _derive_expert_metadata(
             receipt_path = source.expert_dir / "phase3_sanitized_receipt.json"
             if receipt_path.is_file():
                 expert_receipt = _json(receipt_path)
+                item["leakage_gate_accepted"] = bool(
+                    expert_receipt.get("leakage_audit_accepted", False)
+                )
+                item["rejected_bank_diagnostic_override_used"] = bool(
+                    expert_receipt.get(
+                        "rejected_bank_diagnostic_override_used", False
+                    )
+                )
+                item["sanitization_claim_eligible"] = bool(
+                    expert_receipt.get(
+                        "sanitization_claim_eligible", False
+                    )
+                )
                 bank_dir = Path(expert_receipt["mask_bank_dir"])
                 bank_receipt_path = bank_dir / "sanitized_mask_bank_receipt.json"
                 if bank_receipt_path.is_file():
@@ -1154,6 +1170,16 @@ def build_phase6_analysis(
         "aggregate_selector_metrics": aggregate,
         "joint_expert_fusion_choice": choice,
         "derived_expert_metadata": expert_metadata,
+        "sanitized_branch_scientific_status": {
+            key: expert_metadata["sanitized"][key]
+            for key in (
+                "leakage_gate_accepted",
+                "rejected_bank_diagnostic_override_used",
+                "sanitization_claim_eligible",
+                "leakage_balanced_accuracy",
+                "leakage_source",
+            )
+        },
         "background_confidence_baseline": background_baselines["aggregate"],
         "expert_dominance_audit": dominance,
         "test_metrics_seen": False,
@@ -1513,6 +1539,9 @@ def build_phase6_analysis(
             "sha256": freeze_hash,
         },
         "selected_configuration": choice["selected_configuration"],
+        "sanitized_branch_scientific_status": selection_only[
+            "sanitized_branch_scientific_status"
+        ],
         "test_policy": {
             "reporting_only": True,
             "loaded_after_hashed_freeze": True,

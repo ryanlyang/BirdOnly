@@ -66,6 +66,11 @@ class CampaignReadinessTests(unittest.TestCase):
         )
         self.assertNotIn("SETV_ULA_ENV", environment)
         self.assertNotIn("SETV_ULA_SSL_CHECKPOINT", environment)
+        amendment = self.manifest["scientific_amendments"][
+            "sanitized_rejected_bank_diagnostic_override"
+        ]
+        self.assertTrue(amendment["active"])
+        self.assertFalse(amendment["sanitization_claim_eligible"])
 
     def test_manifest_rejects_a_two_seed_private_pilot(self) -> None:
         broken = deepcopy(self.manifest)
@@ -151,6 +156,60 @@ class CampaignReadinessTests(unittest.TestCase):
         self.assertFalse(report["preflight_used_for_method_selection"])
         self.assertNotIn("test_results", report)
         self.assertEqual(report["artifact_inventory"]["phase0"][0]["state"], "absent")
+
+    def test_rejected_sanitized_resume_requires_one_verified_rejected_bank(
+        self,
+    ) -> None:
+        inventory = _inventory(self.manifest, target="phase3")
+        inventory["phase3"][0].update(
+            {
+                "exists": True,
+                "receipt_exists": True,
+                "state": "verified",
+                "verification": {
+                    "status": "rejected",
+                    "accepted": False,
+                    "receipt_sha256": self.manifest[
+                        "scientific_amendments"
+                    ]["sanitized_rejected_bank_diagnostic_override"][
+                        "bank_receipt_sha256"
+                    ],
+                    "artifact_manifest_sha256": self.manifest[
+                        "scientific_amendments"
+                    ]["sanitized_rejected_bank_diagnostic_override"][
+                        "bank_artifact_manifest_sha256"
+                    ],
+                    "leakage_audit_sha256": self.manifest[
+                        "scientific_amendments"
+                    ]["sanitized_rejected_bank_diagnostic_override"][
+                        "leakage_audit_sha256"
+                    ],
+                },
+            }
+        )
+        with (
+            patch(
+                "setv.campaign._git",
+                side_effect=[(0, "c" * 40), (0, "")],
+            ),
+            patch(
+                "setv.campaign._artifact_inventory",
+                return_value=inventory,
+            ),
+        ):
+            report = run_campaign_preflight(
+                self.manifest,
+                stage="phase3",
+                repository=ROOT,
+                check_tigris_filesystem=False,
+                resume_rejected_sanitized=True,
+            )
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["resume_rejected_sanitized"])
+        self.assertEqual(
+            report["next_action"],
+            "bash scripts/submit_phase3_sanitized_diagnostic_resume.sh",
+        )
 
     def test_phase6_requires_a_real_explicit_ula_execution_source(self) -> None:
         inventory = _inventory(self.manifest, target="phase6")

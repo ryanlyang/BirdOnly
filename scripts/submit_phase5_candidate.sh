@@ -69,6 +69,15 @@ for path in "$SETV_EXACT_FUSION_DIR" "$SETV_SANITIZED_FUSION_DIR" "$SETV_SET_FUS
     exit 2
   fi
 done
+if ! grep -q '"leakage_audit_accepted": false' \
+  "${SETV_SANITIZED_FUSION_DIR}/fusion_receipt.json" \
+  || ! grep -q '"rejected_bank_diagnostic_override_used": true' \
+  "${SETV_SANITIZED_FUSION_DIR}/fusion_receipt.json" \
+  || ! grep -q '"sanitization_claim_eligible": false' \
+  "${SETV_SANITIZED_FUSION_DIR}/fusion_receipt.json"; then
+  echo "Sanitized fusion lacks the locked rejected-bank diagnostic provenance" >&2
+  exit 2
+fi
 for seed in "${candidate_seeds[@]}"; do
   if [[ -e "${ROOT}/candidate_erm/seed_${seed}" ]]; then
     echo "Refusing duplicate candidate output for seed $seed" >&2
@@ -115,6 +124,9 @@ receipt="${ROOT}/submission_receipts/phase5_candidate_${smoke_id}.txt"
   echo "exact_fusion=$SETV_EXACT_FUSION_DIR"
   echo "sanitized_fusion=$SETV_SANITIZED_FUSION_DIR"
   echo "set_fusion=$SETV_SET_FUSION_DIR"
+  echo "sanitized_leakage_gate_accepted=false"
+  echo "sanitized_rejected_bank_diagnostic_override_used=true"
+  echo "sanitized_sanitization_claim_eligible=false"
   echo "exact_fusion_receipt_sha256=$(sha256sum "${SETV_EXACT_FUSION_DIR}/fusion_receipt.json" | awk '{print $1}')"
   echo "sanitized_fusion_receipt_sha256=$(sha256sum "${SETV_SANITIZED_FUSION_DIR}/fusion_receipt.json" | awk '{print $1}')"
   echo "set_fusion_receipt_sha256=$(sha256sum "${SETV_SET_FUSION_DIR}/fusion_receipt.json" | awk '{print $1}')"

@@ -394,4 +394,9 @@ def verify_sanitized_mask_bank(
         "sample_counts": {split: len(bank["sample_id"]) for split, bank in banks.items()},
         "artifact_count": len(artifact["files"]),
         "containment_verified": verify_containment,
+        "receipt_sha256": sha256_file(receipt_path),
+        "artifact_manifest_sha256": sha256_file(manifest_path),
+        "leakage_audit_sha256": sha256_file(
+            root / receipt["leakage_audit"]["path"]
+        ),
     }

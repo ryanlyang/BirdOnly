@@ -94,7 +94,11 @@ Phase 3 adds deterministic 3/3/2 rectangle, ellipse, and smooth-blob mask
 banks; image-held-out logistic, boosted-tree, and binary-CNN leakage auditors;
 paired consistency training for the sanitized-fill ViT; eight-view raw-logit
 evaluation; and sanitized hard/rank/logistic fusion artifacts. The leakage
-gate must pass before expert training can begin. See
+gate remains the ordinary production requirement. For this private pilot, the
+project owner explicitly authorized the immutable job-21917 rejected bank as
+a diagnostic selector signal. The dedicated resume path preserves
+`leakage_audit_accepted=false` and
+`sanitization_claim_eligible=false` through all downstream receipts. See
 `docs/PHASE3_SANITIZED_EXPERT.md`.
 
 ## Phase 4

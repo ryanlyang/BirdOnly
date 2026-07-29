@@ -13,6 +13,11 @@ set -Eeuo pipefail
 : "${SETV_OBJECT_SEED:?missing SETV_OBJECT_SEED}"
 : "${SETV_SANITIZED_SEED:?missing SETV_SANITIZED_SEED}"
 : "${SETV_SANITIZED_FUSION_SEED:?missing SETV_SANITIZED_FUSION_SEED}"
+if [[ "${SETV_ALLOW_REJECTED_SANITIZED_BANK:-0}" == "1" ]]; then
+  warning_args=(--allow-expert-sanity-warnings)
+else
+  warning_args=()
+fi
 
 ENV=/home/ryreu/miniforge3-aarch64/envs/fcv_gh200
 ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
@@ -29,5 +34,6 @@ python -u scripts/build_sanitized_fusions.py \
   --config configs/fusion_sanitized.yaml \
   --seed "$SETV_SANITIZED_FUSION_SEED" \
   --object-expert-dir "$OBJECT" \
-  --sanitized-expert-dir "$SANITIZED"
+  --sanitized-expert-dir "$SANITIZED" \
+  "${warning_args[@]}"
 python -u scripts/verify_sanitized_fusions.py --fusion-dir "$FUSION"

@@ -118,6 +118,33 @@ def validate_campaign_manifest(manifest: dict[str, Any]) -> None:
             raise ConfigurationError(
                 f"Locked campaign policy {key} must be {expected!r}"
             )
+    expected_amendment = {
+        "active": True,
+        "source_audit_job_id": "21917",
+        "authorization": "project_owner_explicit",
+        "purpose": "include_useful_signal_in_private_pilot_selection",
+        "bank_receipt_sha256": (
+            "09bcee34543445dfe08b6c11ed0266c83bcd787808d6b1ba5aadc173f52b9446"
+        ),
+        "bank_artifact_manifest_sha256": (
+            "bc98ec450d653707848fcbeee4bddfe3e5cd6a22b01091ec1c0de47c843218f4"
+        ),
+        "leakage_audit_sha256": (
+            "469f5e042efd660fadfae0413af6f787733417bddc5f92b40db55f8beff17a7c"
+        ),
+        "leakage_gate_accepted": False,
+        "sanitization_claim_eligible": False,
+    }
+    if (
+        manifest.get("scientific_amendments", {}).get(
+            "sanitized_rejected_bank_diagnostic_override"
+        )
+        != expected_amendment
+    ):
+        raise ConfigurationError(
+            "The sanitized rejected-bank diagnostic amendment must remain "
+            "explicit and locked"
+        )
     if manifest.get("ula", {}).get("method_label") != "uLA-style":
         raise ConfigurationError("Campaign uLA method label must be uLA-style")
     if (
@@ -285,7 +312,13 @@ def _generic_artifact_hash_check(root: Path) -> dict[str, Any]:
     return {"artifact_count": len(files)}
 
 
-def _verify_artifact(stage: str, index: int, path: Path) -> dict[str, Any]:
+def _verify_artifact(
+    stage: str,
+    index: int,
+    path: Path,
+    *,
+    allow_rejected_sanitized_bank: bool = False,
+) -> dict[str, Any]:
     if stage == "phase0":
         from setv.phase0 import verify_phase0
 
@@ -323,7 +356,9 @@ def _verify_artifact(stage: str, index: int, path: Path) -> dict[str, Any]:
             from setv.experts.sanitized_bank import verify_sanitized_mask_bank
 
             return verify_sanitized_mask_bank(
-                path, require_accepted=True, verify_containment=False
+                path,
+                require_accepted=not allow_rejected_sanitized_bank,
+                verify_containment=False,
             )
         if index == 1:
             from setv.experts.train_sanitized import verify_sanitized_expert
@@ -393,7 +428,16 @@ def _artifact_inventory(manifest: dict[str, Any]) -> dict[str, Any]:
                 state = "partial_or_unverified"
             elif (path / receipt).is_file():
                 try:
-                    verification = _verify_artifact(stage, index, path)
+                    verification = _verify_artifact(
+                        stage,
+                        index,
+                        path,
+                        allow_rejected_sanitized_bank=bool(
+                            manifest["scientific_amendments"][
+                                "sanitized_rejected_bank_diagnostic_override"
+                            ]["active"]
+                        ),
+                    )
                     state = (
                         "awaiting_human_gate"
                         if verification.get("status")
@@ -426,6 +470,7 @@ def run_campaign_preflight(
     stage: str,
     repository: str | Path,
     check_tigris_filesystem: bool = True,
+    resume_rejected_sanitized: bool = False,
 ) -> dict[str, Any]:
     if stage not in STAGES:
         raise ConfigurationError(f"Unknown campaign stage: {stage}")
@@ -581,17 +626,59 @@ def run_campaign_preflight(
         ]
     target_states = [row["state"] for row in inventory[stage]]
     target_absent = all(value == "absent" for value in target_states)
+    diagnostic_resume_ready = False
+    if resume_rejected_sanitized:
+        if stage != "phase3":
+            raise ConfigurationError(
+                "Rejected-sanitized resume is valid only for phase3"
+            )
+        amendment = manifest["scientific_amendments"][
+            "sanitized_rejected_bank_diagnostic_override"
+        ]
+        bank_verification = inventory["phase3"][0].get("verification") or {}
+        diagnostic_resume_ready = bool(
+            amendment["active"]
+            and target_states == ["verified", "absent", "absent"]
+            and bank_verification.get("accepted") is False
+            and bank_verification.get("status") == "rejected"
+            and bank_verification.get("receipt_sha256")
+            == amendment["bank_receipt_sha256"]
+            and bank_verification.get("artifact_manifest_sha256")
+            == amendment["bank_artifact_manifest_sha256"]
+            and bank_verification.get("leakage_audit_sha256")
+            == amendment["leakage_audit_sha256"]
+        )
+        checks.append(
+            _check(
+                "rejected_sanitized_diagnostic_resume",
+                diagnostic_resume_ready,
+                blocking=True,
+                details={
+                    "amendment": amendment,
+                    "target_states": target_states,
+                    "bank_verification": bank_verification,
+                    "bank_is_reused_without_overwrite": True,
+                },
+            )
+        )
     checks.append(
         _check(
             "artifact_stage_boundary",
-            not missing_prerequisites and target_absent,
+            not missing_prerequisites
+            and (diagnostic_resume_ready or target_absent),
             blocking=True,
             details={
                 "missing_prerequisite_stages": missing_prerequisites,
                 "target_states": target_states,
-                "target_output_exists_requires_operator": not target_absent,
-                "partial_output_requires_recovery": any(
-                    value not in {"absent", "verified"} for value in target_states
+                "target_output_exists_requires_operator": (
+                    not target_absent and not diagnostic_resume_ready
+                ),
+                "partial_output_requires_recovery": (
+                    not diagnostic_resume_ready
+                    and any(
+                        value not in {"absent", "verified"}
+                        for value in target_states
+                    )
                 ),
             },
         )
@@ -651,7 +738,11 @@ def run_campaign_preflight(
         elif stage == "phase2":
             next_action = "bash scripts/submit_phase2_exact.sh"
         elif stage == "phase3":
-            next_action = "bash scripts/submit_phase3_sanitized.sh"
+            next_action = (
+                "bash scripts/submit_phase3_sanitized_diagnostic_resume.sh"
+                if resume_rejected_sanitized
+                else "bash scripts/submit_phase3_sanitized.sh"
+            )
         elif stage == "phase4":
             next_action = "bash scripts/submit_phase4_set.sh"
         elif stage == "phase5":
@@ -682,6 +773,7 @@ def run_campaign_preflight(
         "status": "ready" if ready else "blocked",
         "ready": ready,
         "stage": stage,
+        "resume_rejected_sanitized": resume_rejected_sanitized,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "campaign_id": manifest["campaign_id"],
         "campaign_manifest": {

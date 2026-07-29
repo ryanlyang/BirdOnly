@@ -310,6 +310,26 @@ for binary Waterbirds.
 
 If necessary, match sanitized mask geometry distributions across classes.
 
+#### Private-pilot diagnostic amendment
+
+The first frozen sanitized bank, audit job `21917`, failed the leakage
+acceptance rule. Its failed status is not revised. The project owner explicitly
+authorized that immutable rejected bank to be trained and compared as a
+diagnostic signal in the private pilot.
+
+Every artifact using this branch must record:
+
+```text
+leakage_audit_accepted = false
+rejected_bank_diagnostic_override_used = true
+sanitization_claim_eligible = false
+```
+
+The rejected bank may participate in expert-fusion selection, but results from
+that branch cannot be described as leakage-free or as evidence that the
+sanitization policy passed. The existing bank must be hash-verified and reused;
+do not regenerate it, relabel it accepted, or overwrite its audit.
+
 #### Training
 
 For each training image, draw two distinct sanitized masks from its bank.

@@ -52,3 +52,15 @@ policy:
   hide_test_until_hashed_freeze: true
   require_gh200_smoke_per_training_phase: true
   require_ula_smoke_before_phase6: true
+
+scientific_amendments:
+  sanitized_rejected_bank_diagnostic_override:
+    active: true
+    source_audit_job_id: "21917"
+    authorization: project_owner_explicit
+    purpose: include_useful_signal_in_private_pilot_selection
+    bank_receipt_sha256: 09bcee34543445dfe08b6c11ed0266c83bcd787808d6b1ba5aadc173f52b9446
+    bank_artifact_manifest_sha256: bc98ec450d653707848fcbeee4bddfe3e5cd6a22b01091ec1c0de47c843218f4
+    leakage_audit_sha256: 469f5e042efd660fadfae0413af6f787733417bddc5f92b40db55f8beff17a7c
+    leakage_gate_accepted: false
+    sanitization_claim_eligible: false

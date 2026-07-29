@@ -65,8 +65,32 @@ sampled image together. Image-aggregated balanced accuracy is also reported.
 A rejected bank is retained for diagnosis, but the command exits nonzero and
 the expert training gate refuses it.
 
-If the real-data bank fails, do not bypass the gate. Revise the frozen
-geometry policy, regenerate under a new seed/config receipt, and re-audit.
+The original production rule remains fail-closed. The real-data bank from
+audit job 21917 failed all three auditors and remains recorded as rejected.
+The project owner subsequently authorized an explicit private-pilot diagnostic
+amendment: use that immutable bank as a selector signal without treating it as
+sanitization-compliant. This does not change the audit result.
+
+Only the dedicated resume launcher may exercise the amendment:
+
+```bash
+bash scripts/submit_phase3_sanitized_diagnostic_resume.sh
+```
+
+It reuses and hash-verifies the existing bank, then submits only smoke,
+expert training, and fusion. It does not regenerate, edit, accept, or
+overwrite the rejected bank. Expert, fusion, Phase 5, and Phase 6 receipts
+must carry:
+
+```text
+leakage_audit_accepted = false
+rejected_bank_diagnostic_override_used = true
+sanitization_claim_eligible = false
+```
+
+Results from this branch are diagnostic evidence and may participate in the
+private pilot's expert-fusion comparison, but they cannot support a claim that
+mask geometry was sanitized successfully.
 
 ## Sanitized expert
 
@@ -108,11 +132,17 @@ The sanitized true-class margins reuse the Phase 2 implementations of:
 Candidate scoring accepts only sample-ID/label-aligned logits from untouched
 validation images.
 
-The launcher loads all four frozen seeds from
+The ordinary fail-closed launcher loads all four frozen seeds from
 `configs/campaign_waterbirds95.yaml`:
 
 ```bash
 bash scripts/submit_phase3_sanitized.sh
+```
+
+For the operator-authorized job-21917 rejected-bank diagnostic resume, use:
+
+```bash
+bash scripts/submit_phase3_sanitized_diagnostic_resume.sh
 ```
 
 The Tigris dependency chain is:

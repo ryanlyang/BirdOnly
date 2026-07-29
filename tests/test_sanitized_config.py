@@ -34,8 +34,23 @@ class SanitizedConfigTests(unittest.TestCase):
         )
         self.assertEqual(expert["training"]["lambda_consistency"], 0.5)
         self.assertEqual(expert["input"]["validation_masks_per_image"], 8)
+        self.assertFalse(
+            expert["scientific_override"][
+                "allow_rejected_mask_bank_for_diagnostic_pilot"
+            ]
+        )
+        overridden = load_sanitized_expert_config(
+            ROOT / "configs" / "expert_background_sanitized.yaml",
+            seed=12,
+            mask_bank_dir="/tmp/bank",
+            allow_rejected_mask_bank=True,
+        )
+        self.assertTrue(
+            overridden["scientific_override"][
+                "allow_rejected_mask_bank_for_diagnostic_pilot"
+            ]
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-

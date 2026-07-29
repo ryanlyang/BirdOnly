@@ -5,6 +5,9 @@ phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
 mask_bank_dir: null
 output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/background_sanitized
 
+scientific_override:
+  allow_rejected_mask_bank_for_diagnostic_pilot: false
+
 model:
   architecture: vit_small_patch16_224
   pretrained: true

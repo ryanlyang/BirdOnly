@@ -53,6 +53,33 @@ from setv.utils.seeds import derive_seed, seed_python_numpy, seed_torch_if_avail
 ModelFactory = Callable[[dict[str, Any]], Any]
 
 
+def _fusion_scientific_context(
+    receipts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    sanitized = receipts["sanitized"]
+    return {
+        "sanitized": {
+            "leakage_audit_accepted": bool(
+                sanitized.get("leakage_audit_accepted", True)
+            ),
+            "rejected_bank_diagnostic_override_used": bool(
+                sanitized.get(
+                    "rejected_bank_diagnostic_override_used", False
+                )
+            ),
+            "diagnostic_only": bool(
+                sanitized.get("diagnostic_only", False)
+            ),
+            "sanitization_claim_eligible": bool(
+                sanitized.get("sanitization_claim_eligible", True)
+            ),
+            "scientific_warnings": list(
+                sanitized.get("scientific_warnings", [])
+            ),
+        }
+    }
+
+
 def _candidate_device(config: dict[str, Any]):
     import torch
 
@@ -249,10 +276,15 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
     ids = biased_manifest["sample_id"].astype(str).to_numpy()
     labels = biased_manifest["y"].to_numpy(dtype=np.int64)
     selector_inputs = load_selector_inputs(config["fusion_dirs"], ids, labels)
-    for source in selector_inputs.values():
+    fusion_receipts = {}
+    for name, source in selector_inputs.items():
         receipt = json.loads((source.fusion_dir / "fusion_receipt.json").read_text())
         if Path(receipt["phase0_dir"]).resolve() != phase0_dir:
             raise DataValidationError("A fusion source references a different Phase 0")
+        fusion_receipts[name] = receipt
+    fusion_scientific_context = _fusion_scientific_context(
+        fusion_receipts
+    )
     return {
         "phase0_dir": phase0_dir,
         "phase0_config": phase0_config,
@@ -262,6 +294,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         "loaders": loaders,
         "model": model,
         "selector_inputs": selector_inputs,
+        "fusion_scientific_context": fusion_scientific_context,
         "biased_ids": ids,
         "biased_labels": labels,
         "pretrained_cfg": pretrained_cfg,
@@ -414,6 +447,9 @@ def run_candidate_smoke(
         "oracle_evaluated_in_isolated_path": len(oracle["sample_id"]),
         "test_evaluated_but_metrics_hidden": len(test["sample_id"]),
         "test_metrics": None,
+        "fusion_scientific_context": prepared[
+            "fusion_scientific_context"
+        ],
         "phase0_artifact_manifest_sha256": sha256_file(
             prepared["phase0_dir"] / BASE_ARTIFACT_MANIFEST
         ),
@@ -632,6 +668,9 @@ def train_candidate(
             "oracle_excluded_from_realistic_selection": True,
             "test_metrics_seen": False,
             "test_metrics_used": False,
+            "fusion_scientific_context": prepared[
+                "fusion_scientific_context"
+            ],
         }
         selection_path = staging / "selection" / "selection_receipt.json"
         write_json(selection_path, selection_receipt)
@@ -688,6 +727,9 @@ def train_candidate(
                 prepared["phase0_dir"] / APPROVAL_RECEIPT
             ),
             "fusion_receipt_sha256": source_hashes,
+            "fusion_scientific_context": prepared[
+                "fusion_scientific_context"
+            ],
             "pretrained_provenance": (
                 {
                     key: prepared["pretrained_cfg"].get(key)
@@ -807,6 +849,13 @@ def verify_candidate(
     selection = json.loads(selection_path.read_text())
     if selection["test_metrics_seen"] or selection["test_metrics_used"]:
         raise DataValidationError("Selection receipt indicates test leakage")
+    if (
+        selection.get("fusion_scientific_context")
+        != receipt.get("fusion_scientific_context")
+    ):
+        raise DataValidationError(
+            "Candidate selection lost fusion scientific context"
+        )
     checkpoints = list((root / "selection" / "checkpoints").glob("*.pt"))
     if len(checkpoints) != receipt["rolling_checkpoint_count"]:
         raise DataValidationError("Rolling checkpoint count changed")
@@ -853,6 +902,19 @@ def verify_candidate(
         current = sha256_file(Path(fusion_dir) / "fusion_receipt.json")
         if current != receipt["fusion_receipt_sha256"][name]:
             raise DataValidationError(f"Candidate {name} fusion binding changed")
+    source_receipts = {
+        name: json.loads(
+            (Path(path) / "fusion_receipt.json").read_text()
+        )
+        for name, path in resolved["fusion_dirs"].items()
+    }
+    if (
+        _fusion_scientific_context(source_receipts)
+        != receipt.get("fusion_scientific_context")
+    ):
+        raise DataValidationError(
+            "Candidate fusion scientific context changed"
+        )
     return {
         "status": "complete",
         "seed": receipt["seed"],
@@ -862,4 +924,7 @@ def verify_candidate(
         "test_namespace": reporting["namespace"],
         "selection_receipt_sha256": selection_hash,
         "artifact_count": len(manifest["files"]),
+        "fusion_scientific_context": receipt[
+            "fusion_scientific_context"
+        ],
     }

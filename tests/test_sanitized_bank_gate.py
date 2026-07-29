@@ -48,7 +48,9 @@ def rejected_audit(
 
 
 class SanitizedBankGateTests(unittest.TestCase):
-    def test_rejected_bank_is_retained_but_cannot_train(self) -> None:
+    def test_rejected_bank_is_retained_and_gate_is_fail_closed_by_default(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset, masks = create_fixture(root)

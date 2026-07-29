@@ -111,9 +111,21 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
     phase0_dir = Path(config["phase0_dir"]).expanduser().resolve()
     mask_bank_dir = Path(config["mask_bank_dir"]).expanduser().resolve()
     verify_phase0(phase0_dir, require_approval=True)
-    bank_verification = verify_sanitized_mask_bank(
-        mask_bank_dir, require_accepted=True, verify_containment=True
+    allow_rejected = bool(
+        config["scientific_override"][
+            "allow_rejected_mask_bank_for_diagnostic_pilot"
+        ]
     )
+    bank_verification = verify_sanitized_mask_bank(
+        mask_bank_dir,
+        require_accepted=not allow_rejected,
+        verify_containment=True,
+    )
+    rejected_bank_override_used = not bool(bank_verification["accepted"])
+    if rejected_bank_override_used and not allow_rejected:
+        raise DataValidationError(
+            "Rejected sanitized bank requires the explicit diagnostic override"
+        )
     with (mask_bank_dir / "sanitized_mask_bank_receipt.json").open(
         "r", encoding="utf-8"
     ) as handle:
@@ -163,6 +175,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         "mask_bank_dir": mask_bank_dir,
         "bank_receipt": bank_receipt,
         "bank_verification": bank_verification,
+        "rejected_bank_override_used": rejected_bank_override_used,
         "phase0_config": phase0_config,
         "seed_receipt": seed_receipt,
         "device": device,
@@ -293,8 +306,14 @@ def _evaluate(model, loader, device):
     return metrics, payload
 
 
-def _warnings(summary: dict[str, Any]) -> list[str]:
+def _warnings(
+    summary: dict[str, Any], *, rejected_bank_override_used: bool = False
+) -> list[str]:
     warnings = []
+    if rejected_bank_override_used:
+        warnings.append(
+            "sanitized_mask_bank_failed_leakage_gate_diagnostic_override"
+        )
     if float(summary["accuracy"]) <= 0.5:
         warnings.append("background_sanitized_accuracy_not_above_binary_chance")
     if float(summary["margin"]["standard_deviation"]) <= 1e-8:
@@ -349,7 +368,21 @@ def run_sanitized_expert_smoke(
         "train": train_metrics,
         "biased_val": validation_metrics,
         "score_summary": summary,
-        "scientific_warnings": _warnings(summary),
+        "scientific_warnings": _warnings(
+            summary,
+            rejected_bank_override_used=prepared[
+                "rejected_bank_override_used"
+            ],
+        ),
+        "leakage_audit_accepted": bool(
+            prepared["bank_verification"]["accepted"]
+        ),
+        "rejected_bank_diagnostic_override_used": prepared[
+            "rejected_bank_override_used"
+        ],
+        "sanitization_claim_eligible": bool(
+            prepared["bank_verification"]["accepted"]
+        ),
         "projected_twenty_epoch_seconds": float(train_metrics["epoch_seconds"] * 20),
         "mask_bank_artifact_manifest_sha256": sha256_file(
             prepared["mask_bank_dir"] / "artifact_manifest.json"
@@ -439,6 +472,12 @@ def train_sanitized_expert(
             "mask_bank_artifact_manifest_sha256": sha256_file(
                 prepared["mask_bank_dir"] / "artifact_manifest.json"
             ),
+            "leakage_audit_accepted": bool(
+                prepared["bank_verification"]["accepted"]
+            ),
+            "rejected_bank_diagnostic_override_used": prepared[
+                "rejected_bank_override_used"
+            ],
             "pretrained_provenance": prepared["pretrained_provenance"],
         }
         _atomic_torch_save(checkpoint, checkpoint_path)
@@ -466,7 +505,13 @@ def train_sanitized_expert(
         except ImportError:
             provenance["timm_version"] = None
         write_json(staging / "provenance" / "runtime.json", provenance)
-        warnings = _warnings(summary)
+        warnings = _warnings(
+            summary,
+            rejected_bank_override_used=prepared[
+                "rejected_bank_override_used"
+            ],
+        )
+        leakage_accepted = bool(prepared["bank_verification"]["accepted"])
         receipt = {
             "schema_version": 1,
             "status": "complete",
@@ -492,7 +537,12 @@ def train_sanitized_expert(
             "mask_bank_artifact_manifest_sha256": sha256_file(
                 prepared["mask_bank_dir"] / "artifact_manifest.json"
             ),
-            "leakage_audit_accepted": True,
+            "leakage_audit_accepted": leakage_accepted,
+            "rejected_bank_diagnostic_override_used": prepared[
+                "rejected_bank_override_used"
+            ],
+            "diagnostic_only": not leakage_accepted,
+            "sanitization_claim_eligible": leakage_accepted,
             "checkpoint": {
                 "path": checkpoint_path.relative_to(staging).as_posix(),
                 "sha256": sha256_file(checkpoint_path),
@@ -503,7 +553,13 @@ def train_sanitized_expert(
                 "summary": summary,
             },
             "scientific_warnings": warnings,
-            "scientific_gate": "review_required" if warnings else "no_automatic_warning",
+            "scientific_gate": (
+                "failed_leakage_gate_operator_diagnostic_override"
+                if not leakage_accepted
+                else "review_required"
+                if warnings
+                else "no_automatic_warning"
+            ),
         }
         write_json(staging / "phase3_sanitized_receipt.json", receipt)
         logger.log("background_sanitized_training_complete", summary=summary)
@@ -555,9 +611,36 @@ def verify_sanitized_expert(
     ):
         raise DataValidationError("Sanitized expert Phase 0 binding changed")
     mask_bank_dir = Path(receipt["mask_bank_dir"])
-    verify_sanitized_mask_bank(
-        mask_bank_dir, require_accepted=True, verify_containment=False
+    override_used = bool(
+        receipt.get("rejected_bank_diagnostic_override_used", False)
     )
+    bank_verification = verify_sanitized_mask_bank(
+        mask_bank_dir,
+        require_accepted=not override_used,
+        verify_containment=False,
+    )
+    leakage_accepted = bool(bank_verification["accepted"])
+    if bool(receipt.get("leakage_audit_accepted")) != leakage_accepted:
+        raise DataValidationError(
+            "Sanitized expert leakage-gate status changed"
+        )
+    if override_used:
+        required_warning = (
+            "sanitized_mask_bank_failed_leakage_gate_diagnostic_override"
+        )
+        if (
+            leakage_accepted
+            or not receipt.get("diagnostic_only")
+            or receipt.get("sanitization_claim_eligible") is not False
+            or required_warning not in receipt.get("scientific_warnings", [])
+        ):
+            raise DataValidationError(
+                "Sanitized expert diagnostic override provenance is invalid"
+            )
+    elif not leakage_accepted:
+        raise DataValidationError(
+            "Rejected sanitized bank lacks an explicit diagnostic override"
+        )
     if receipt["mask_bank_artifact_manifest_sha256"] != sha256_file(
         mask_bank_dir / "artifact_manifest.json"
     ):
@@ -580,6 +663,19 @@ def verify_sanitized_expert(
             raise DataValidationError("Sanitized final checkpoint has wrong kind")
         if not checkpoint.get("model_state_dict"):
             raise DataValidationError("Sanitized final checkpoint state_dict is empty")
+        if (
+            bool(checkpoint.get("leakage_audit_accepted"))
+            != leakage_accepted
+            or bool(
+                checkpoint.get(
+                    "rejected_bank_diagnostic_override_used", False
+                )
+            )
+            != override_used
+        ):
+            raise DataValidationError(
+                "Sanitized checkpoint lost leakage-override provenance"
+            )
     return {
         "status": "complete",
         "seed": receipt["seed"],
@@ -587,4 +683,9 @@ def verify_sanitized_expert(
         "scores": summary,
         "checkpoint_loaded": load_checkpoint,
         "scientific_warnings": receipt["scientific_warnings"],
+        "leakage_audit_accepted": leakage_accepted,
+        "rejected_bank_diagnostic_override_used": override_used,
+        "sanitization_claim_eligible": bool(
+            receipt.get("sanitization_claim_eligible", leakage_accepted)
+        ),
     }

@@ -21,6 +21,14 @@ def main() -> int:
     parser.add_argument("--phase0-dir")
     parser.add_argument("--output-root")
     parser.add_argument("--device", choices=("cuda", "cpu"))
+    parser.add_argument(
+        "--allow-rejected-mask-bank",
+        action="store_true",
+        help=(
+            "Diagnostic pilot override: train from a leakage-rejected bank "
+            "without treating it as sanitization-compliant."
+        ),
+    )
     args = parser.parse_args()
     config = load_sanitized_expert_config(
         args.config,
@@ -29,6 +37,7 @@ def main() -> int:
         mask_bank_dir=args.mask_bank_dir,
         output_root=args.output_root,
         device=args.device,
+        allow_rejected_mask_bank=args.allow_rejected_mask_bank,
     )
     destination = train_sanitized_expert(config)
     print(
@@ -42,4 +51,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

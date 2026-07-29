@@ -30,6 +30,11 @@ def main() -> int:
     parser.add_argument("--report", required=True)
     parser.add_argument("--skip-tigris-filesystem", action="store_true")
     parser.add_argument("--status-only", action="store_true")
+    parser.add_argument(
+        "--resume-rejected-sanitized",
+        action="store_true",
+        help="Validate the locked diagnostic resume from an existing rejected bank.",
+    )
     args = parser.parse_args()
     manifest = load_campaign_manifest(args.config)
     report = run_campaign_preflight(
@@ -37,6 +42,7 @@ def main() -> int:
         stage=args.stage,
         repository=args.repository,
         check_tigris_filesystem=not args.skip_tigris_filesystem,
+        resume_rejected_sanitized=args.resume_rejected_sanitized,
     )
     destination = Path(args.report).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
