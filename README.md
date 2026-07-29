@@ -106,7 +106,9 @@ positions; and uses no second pooling module. Validation averages eight
 token-dropout views at the raw-logit level before hard, rank, and repeated
 cross-fitted logistic fusion. Invalid training crops are deterministically
 retried without relaxing the locked 16-background-token minimum; the
-canonical fallback is audited over every train and validation image. See
+fallback fits the complete frame with aspect ratio preserved and marks all
+padding ineligible. Every train and validation image is audited before model
+construction. See
 `docs/PHASE4_BACKGROUND_SET_TRANSFORMER.md`.
 
 ## Phase 5

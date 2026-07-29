@@ -8,7 +8,11 @@ from typing import Any
 import numpy as np
 
 from setv.data.dataset import WaterbirdsManifestDataset
-from setv.data.joint_transforms import build_eval_transform, build_train_transform
+from setv.data.joint_transforms import (
+    build_eval_transform,
+    build_full_frame_background_transform,
+    build_train_transform,
+)
 from setv.errors import DataValidationError
 from setv.experts.exact_data import dilate_binary_mask
 from setv.experts.object_data import normalized_tensor
@@ -106,7 +110,7 @@ def select_training_background_view(
     sample_id: str,
     epoch: int,
     base_seed: int,
-    eval_transform,
+    fallback_transform,
 ):
     """Select a deterministic valid crop without weakening patch eligibility."""
 
@@ -146,10 +150,10 @@ def select_training_background_view(
 
     if (
         expert_config["input"]["training_crop_fallback"]
-        != "canonical_evaluation_transform"
+        != "full_frame_aspect_fit_excluding_padding"
     ):
         raise DataValidationError("Unsupported set-expert crop fallback")
-    transformed_image, transformed_mask = eval_transform(image, mask)
+    transformed_image, transformed_mask = fallback_transform(image, mask)
     try:
         token_mask, counts = select_background_patch_tokens(
             transformed_mask,
@@ -166,7 +170,7 @@ def select_training_background_view(
         )
     except InsufficientBackgroundTokensError as exc:
         raise DataValidationError(
-            "Set-expert canonical fallback cannot satisfy the locked token "
+            "Set-expert full-frame fallback cannot satisfy the locked token "
             f"minimum for sample {sample_id}: "
             f"rejected_crop_counts={rejected_counts}, "
             f"fallback_available={exc.available}, minimum={exc.minimum}"
@@ -211,6 +215,9 @@ class SetBackgroundDataset:
             float(value) for value in expert_config["model"]["normalization_std"]
         )
         self.eval_transform = build_eval_transform(phase0_config)
+        self.full_frame_transform = build_full_frame_background_transform(
+            phase0_config
+        )
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = int(epoch)
@@ -218,8 +225,10 @@ class SetBackgroundDataset:
     def __len__(self) -> int:
         return len(self.base)
 
-    def audit_canonical_background_capacity(self) -> dict[str, Any]:
+    def audit_background_view_capacity(self) -> dict[str, Any]:
         available_counts: list[int] = []
+        canonical_available_counts: list[int] = []
+        fallback_sample_ids: list[str] = []
         minimum_sample_id: str | None = None
         minimum_available: int | None = None
         for index in range(len(self.base)):
@@ -237,11 +246,35 @@ class SetBackgroundDataset:
                     apply_dropout=False,
                 )
             except InsufficientBackgroundTokensError as exc:
-                raise DataValidationError(
-                    "Set-expert canonical fallback fails the locked token "
-                    f"minimum for sample {example.sample_id}: "
-                    f"available={exc.available}, minimum={exc.minimum}"
-                ) from exc
+                canonical_available_counts.append(exc.available)
+                fallback_sample_ids.append(str(example.sample_id))
+                _, mask = self.full_frame_transform(
+                    example.image, example.mask
+                )
+                try:
+                    _, counts = select_background_patch_tokens(
+                        mask,
+                        self.config,
+                        selection_seed=derive_seed(
+                            self.base_seed,
+                            "set_full_frame_audit:"
+                            f"sample={example.sample_id}",
+                        ),
+                        dropout_seed=0,
+                        apply_dropout=False,
+                    )
+                except InsufficientBackgroundTokensError as fallback_exc:
+                    raise DataValidationError(
+                        "Set-expert full-frame fallback fails the locked token "
+                        f"minimum for sample {example.sample_id}: "
+                        f"canonical_available={exc.available}, "
+                        f"fallback_available={fallback_exc.available}, "
+                        f"minimum={fallback_exc.minimum}"
+                    ) from fallback_exc
+            else:
+                canonical_available_counts.append(
+                    int(counts["valid_before_cap"])
+                )
             available = int(counts["valid_before_cap"])
             available_counts.append(available)
             if minimum_available is None or available < minimum_available:
@@ -253,6 +286,14 @@ class SetBackgroundDataset:
             "maximum_valid_background_tokens": int(max(available_counts)),
             "mean_valid_background_tokens": float(np.mean(available_counts)),
             "minimum_sample_id": minimum_sample_id,
+            "canonical_view_minimum_valid_background_tokens": int(
+                min(canonical_available_counts)
+            ),
+            "full_frame_fallback_sample_count": len(fallback_sample_ids),
+            "full_frame_fallback_fraction": (
+                len(fallback_sample_ids) / len(available_counts)
+            ),
+            "full_frame_fallback_sample_ids": fallback_sample_ids,
             "locked_minimum_tokens": int(
                 self.config["input"]["min_background_tokens"]
             ),
@@ -273,7 +314,7 @@ class SetBackgroundDataset:
                     sample_id=str(example.sample_id),
                     epoch=self.epoch,
                     base_seed=self.base_seed,
-                    eval_transform=self.eval_transform,
+                    fallback_transform=self.full_frame_transform,
                 )
             )
             image_tensor = normalized_tensor(image, self.mean, self.std)
@@ -286,6 +327,27 @@ class SetBackgroundDataset:
                 **crop_metadata,
             }
         image, mask = self.eval_transform(example.image, example.mask)
+        try:
+            select_background_patch_tokens(
+                mask,
+                self.config,
+                selection_seed=0,
+                dropout_seed=0,
+                apply_dropout=False,
+            )
+        except InsufficientBackgroundTokensError:
+            if (
+                self.config["input"][
+                    "evaluation_insufficient_view_fallback"
+                ]
+                != "full_frame_aspect_fit_excluding_padding"
+            ):
+                raise DataValidationError(
+                    "Unsupported set-expert evaluation fallback"
+                )
+            image, mask = self.full_frame_transform(
+                example.image, example.mask
+            )
         image_tensor = normalized_tensor(image, self.mean, self.std)
         view_masks = []
         view_counts = []

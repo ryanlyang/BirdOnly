@@ -24,7 +24,11 @@ class SetConfigTests(unittest.TestCase):
         self.assertEqual(config["input"]["training_crop_max_attempts"], 10)
         self.assertEqual(
             config["input"]["training_crop_fallback"],
-            "canonical_evaluation_transform",
+            "full_frame_aspect_fit_excluding_padding",
+        )
+        self.assertEqual(
+            config["input"]["evaluation_insufficient_view_fallback"],
+            "full_frame_aspect_fit_excluding_padding",
         )
         changed = deepcopy(config)
         changed["input"]["maximum_foreground_fraction"] = 0.02

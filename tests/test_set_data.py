@@ -96,7 +96,7 @@ class SetDataTests(unittest.TestCase):
                 sample_id="retry-fixture",
                 epoch=3,
                 base_seed=51,
-                eval_transform=valid_transform,
+                fallback_transform=valid_transform,
             )
         self.assertEqual(metadata["training_crop_attempt_count"], 2)
         self.assertEqual(metadata["training_crop_rejected_count"], 1)
@@ -135,11 +135,33 @@ class SetDataTests(unittest.TestCase):
                 sample_id="fallback-fixture",
                 epoch=4,
                 base_seed=51,
-                eval_transform=valid_transform,
+                fallback_transform=valid_transform,
             )
         self.assertEqual(metadata["training_crop_attempt_count"], 2)
         self.assertEqual(metadata["training_crop_rejected_count"], 2)
         self.assertEqual(metadata["training_crop_fallback_used"], 1)
+        self.assertGreaterEqual(counts["retained_after_dropout"], 16)
+
+    def test_full_frame_padding_cannot_be_selected_as_background(self) -> None:
+        from setv.data.joint_transforms import (
+            JointFitLongestWithExcludedPadding,
+        )
+
+        image = Image.new("RGB", (40, 80), "white")
+        source_mask = Image.new("L", image.size, 0)
+        _, transformed_mask = JointFitLongestWithExcludedPadding(224)(
+            image, source_mask
+        )
+        selected, counts = select_background_patch_tokens(
+            transformed_mask,
+            self.config,
+            selection_seed=7,
+            dropout_seed=8,
+            apply_dropout=False,
+        )
+        selected_grid = selected.reshape(14, 14)
+        self.assertFalse(selected_grid[:, :4].any())
+        self.assertFalse(selected_grid[:, 10:].any())
         self.assertGreaterEqual(counts["retained_after_dropout"], 16)
 
 

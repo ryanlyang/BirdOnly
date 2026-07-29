@@ -66,7 +66,12 @@ def validate_set_expert_config(config: dict[str, Any]) -> None:
         ("input", "coarse_spatial_bins_per_axis"): 3,
         ("input", "use_dense_position_embeddings"): False,
         ("input", "training_crop_max_attempts"): 10,
-        ("input", "training_crop_fallback"): "canonical_evaluation_transform",
+        ("input", "training_crop_fallback"): (
+            "full_frame_aspect_fit_excluding_padding"
+        ),
+        ("input", "evaluation_insufficient_view_fallback"): (
+            "full_frame_aspect_fit_excluding_padding"
+        ),
         ("training", "epochs"): 30,
         ("training", "optimizer"): "AdamW",
         ("training", "learning_rate"): 1e-4,

@@ -14,18 +14,25 @@ is used only to decide which ViT-S/16 patch tokens are admitted:
    the exact expert.
 2. Keep a patch only when at most 1% of its pixels are foreground.
 3. Deterministically subsample to 180 tokens when necessary.
-4. Fail the sample if fewer than 16 background tokens remain.
+4. Reject a transformed view if fewer than 16 background tokens remain.
 5. During training, retain a deterministic random 80% subset, subject to the
    16-token minimum.
 
 Random resized crops are valid only when they preserve the locked 16-token
 minimum. Training deterministically tries the original crop seed and up to
-nine derived retry seeds. If all ten crops are invalid, it uses the canonical
-evaluation transform for that sample and epoch. Before model construction,
-the complete candidate-train and biased-validation splits are audited to
-prove that this canonical fallback satisfies the minimum for every image.
-Neither foreground eligibility nor the token minimum is relaxed. Per-epoch
-metrics record attempted crops, rejected crops, and fallback counts.
+nine derived retry seeds. If all ten crops are invalid, it fits the complete
+original frame inside 224-by-224 with its aspect ratio preserved. Letterbox
+padding is marked foreground/ineligible before dilation, so no retained token
+can contain artificial padding. Validation ordinarily uses the canonical
+center crop and uses the same full-frame fallback only when that view has
+fewer than 16 eligible tokens.
+
+Before model construction, the complete candidate-train and biased-validation
+splits are audited. The audit records the canonical minimum and the sample IDs
+that require full-frame fallback, and proves that the effective view satisfies
+the minimum for every image. Neither foreground eligibility nor the token
+minimum is relaxed, no patch is duplicated, and no sample is discarded.
+Per-epoch metrics record attempted crops, rejected crops, and fallback counts.
 
 The deterministic maximum-token cap and fixed-count dropout are implementation
 choices used to make a run exactly reproducible. Their seeds and resolved
@@ -71,9 +78,10 @@ Training uses the full `candidate_train` split for 30 epochs:
 The final auxiliary-expert checkpoint is saved. Intermediate expert
 checkpoints are not retained.
 
-Validation uses the canonical Phase 0 transform and eight deterministic
-token-dropout views. Raw logits are averaged across views once. The score
-artifact contains:
+Validation uses the canonical Phase 0 transform when it meets the cardinality
+floor, otherwise the audited full-frame transform, followed by eight
+deterministic token-dropout views. Raw logits are averaged across views once.
+The score artifact contains:
 
 ```text
 sample_id

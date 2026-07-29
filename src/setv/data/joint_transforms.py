@@ -72,6 +72,41 @@ class JointCenterCrop:
         return image.crop(box), mask.crop(box)
 
 
+@dataclass(frozen=True)
+class JointFitLongestWithExcludedPadding:
+    """Fit the full frame in a square and mark every padded pixel ineligible.
+
+    The foreground-valued padding is never a candidate background token.
+    Consequently, every retained patch is composed entirely of pixels from
+    the real image (subject to the stricter downstream dilation and 1% gate).
+    """
+
+    size: int
+
+    def __call__(
+        self, image: Image.Image, mask: Image.Image
+    ) -> tuple[Image.Image, Image.Image]:
+        _assert_aligned(image, mask)
+        width, height = image.size
+        scale = self.size / max(width, height)
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        resized_image = image.convert("RGB").resize(
+            (resized_width, resized_height), Image.Resampling.BICUBIC
+        )
+        resized_mask = mask.convert("L").resize(
+            (resized_width, resized_height), Image.Resampling.NEAREST
+        )
+        output_image = Image.new("RGB", (self.size, self.size), (0, 0, 0))
+        # Foreground-valued padding makes mixed or padded patches ineligible.
+        output_mask = Image.new("L", (self.size, self.size), 255)
+        left = (self.size - resized_width) // 2
+        top = (self.size - resized_height) // 2
+        output_image.paste(resized_image, (left, top))
+        output_mask.paste(resized_mask, (left, top))
+        return output_image, output_mask
+
+
 class JointRandomHorizontalFlip:
     def __init__(self, probability: float = 0.5, rng: random.Random | None = None):
         if not 0.0 <= probability <= 1.0:
@@ -238,6 +273,18 @@ def build_eval_transform(config: dict) -> JointCompose:
         [
             JointResizeShortest(int(transform["evaluation_resize_shortest"])),
             JointCenterCrop(int(transform["image_size"])),
+        ]
+    )
+
+
+def build_full_frame_background_transform(config: dict) -> JointCompose:
+    """Build the Stage 4 fallback that never treats padding as background."""
+
+    return JointCompose(
+        [
+            JointFitLongestWithExcludedPadding(
+                int(config["transforms"]["image_size"])
+            )
         ]
     )
 

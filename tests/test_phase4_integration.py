@@ -132,10 +132,16 @@ class Phase4IntegrationTests(unittest.TestCase):
             self.assertEqual(smoke["train"]["train_amp_skipped_step_count"], 0)
             self.assertIn("train_crop_fallback_count", smoke["train"])
             self.assertEqual(
-                smoke["canonical_fallback_capacity_audit"][
+                smoke["background_view_capacity_audit"][
                     "candidate_train"
                 ]["status"],
                 "passed",
+            )
+            self.assertGreaterEqual(
+                smoke["background_view_capacity_audit"][
+                    "candidate_train"
+                ]["full_frame_fallback_fraction"],
+                0.0,
             )
             set_dir = train_set_expert(
                 set_config, model_factory=lambda unused: TinySetModel()

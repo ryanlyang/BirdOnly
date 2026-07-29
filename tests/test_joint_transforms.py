@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from setv.data.joint_transforms import (
     JointCompose,
+    JointFitLongestWithExcludedPadding,
     JointRandomHorizontalFlip,
     JointRandomResizedCrop,
     binarize_mask,
@@ -57,7 +58,18 @@ class JointTransformTests(unittest.TestCase):
         background = np.asarray(binary) == 0
         self.assertTrue(np.all(object_view[background] == np.array([0, 255, 0])))
 
+    def test_full_frame_fit_marks_padding_ineligible(self) -> None:
+        image = Image.new("RGB", (40, 80), (12, 34, 56))
+        mask = Image.new("L", image.size, 0)
+        transformed_image, transformed_mask = (
+            JointFitLongestWithExcludedPadding(224)(image, mask)
+        )
+        self.assertEqual(transformed_image.size, (224, 224))
+        mask_array = np.asarray(transformed_mask)
+        self.assertTrue(np.all(mask_array[:, :56] == 255))
+        self.assertTrue(np.all(mask_array[:, 56:168] == 0))
+        self.assertTrue(np.all(mask_array[:, 168:] == 255))
+
 
 if __name__ == "__main__":
     unittest.main()
-

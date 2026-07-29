@@ -281,9 +281,11 @@ Special cases:
 - Phase 4 smoke rejected an augmented crop with fewer than 16 clean background
   tokens: retain the failed smoke log and submission receipt. If no Phase 4
   artifact was published, deterministic crop retries plus an audited
-  canonical fallback are an implementation repair because the locked 1%
-  foreground threshold and 16-token minimum remain unchanged. Retry from a
-  clean commit and retain both submission receipts.
+  full-frame aspect-preserving fallback with explicitly ineligible padding are
+  an implementation repair because the locked 1% foreground threshold and
+  16-token minimum remain unchanged. This fallback also applies when the
+  canonical validation crop is intrinsically below the floor. Retry from a
+  clean commit and retain all submission receipts.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified

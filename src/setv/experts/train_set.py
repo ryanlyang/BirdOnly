@@ -74,9 +74,9 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         config,
         training=False,
     )
-    fallback_capacity_audit = {
-        "candidate_train": train_dataset.audit_canonical_background_capacity(),
-        "biased_val": validation_dataset.audit_canonical_background_capacity(),
+    background_view_capacity_audit = {
+        "candidate_train": train_dataset.audit_background_view_capacity(),
+        "biased_val": validation_dataset.audit_background_view_capacity(),
     }
     training = config["training"]
     seed = int(training["seed"])
@@ -107,7 +107,7 @@ def _make_loaders(phase0_dir: Path, phase0_config: dict, config: dict):
         train_dataset,
         train_loader,
         validation_loader,
-        fallback_capacity_audit,
+        background_view_capacity_audit,
     )
 
 
@@ -131,7 +131,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         train_dataset,
         train_loader,
         validation_loader,
-        fallback_capacity_audit,
+        background_view_capacity_audit,
     ) = _make_loaders(phase0_dir, phase0_config, config)
     model = (model_factory or create_set_expert_model)(config).to(device)
     initialization_report = getattr(
@@ -182,7 +182,7 @@ def _prepare(config: dict, model_factory: ModelFactory | None):
         "train_dataset": train_dataset,
         "train_loader": train_loader,
         "validation_loader": validation_loader,
-        "fallback_capacity_audit": fallback_capacity_audit,
+        "background_view_capacity_audit": background_view_capacity_audit,
         "model": model,
         "initialization_report": initialization_report,
         "pretrained_provenance": pretrained_provenance,
@@ -382,8 +382,8 @@ def run_set_expert_smoke(
         "score_summary": summary,
         "scientific_warnings": _warnings(summary),
         "initialization": prepared["initialization_report"],
-        "canonical_fallback_capacity_audit": prepared[
-            "fallback_capacity_audit"
+        "background_view_capacity_audit": prepared[
+            "background_view_capacity_audit"
         ],
         "projected_thirty_epoch_seconds": float(
             (
@@ -538,8 +538,8 @@ def train_set_expert(
                 "training_crop_fallback": config["input"][
                     "training_crop_fallback"
                 ],
-                "canonical_fallback_capacity_audit": prepared[
-                    "fallback_capacity_audit"
+                "background_view_capacity_audit": prepared[
+                    "background_view_capacity_audit"
                 ],
             },
             "config_sha256": sha256_json(resolved),
