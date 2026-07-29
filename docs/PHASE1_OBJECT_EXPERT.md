@@ -1,0 +1,63 @@
+# Phase 1: object-only expert
+
+Phase 1 trains the ImageNet-pretrained `vit_small_patch16_224` object expert
+on the complete approved `candidate_train` split.
+
+For every jointly transformed image-mask pair, the visible bird stays in its
+original position and at its original scale. All non-bird pixels are replaced
+in raw RGB space with `(0, 255, 0)`. Normalization happens afterward.
+
+There is no expert-calibration split, temperature scaling, or calibrated
+probability in the primary pipeline.
+
+## Gate
+
+Training refuses to start unless:
+
+- the complete Phase 0 artifact manifest verifies;
+- the hash-bound human VLM-mask review is approved;
+- an object-expert seed is explicitly supplied;
+- the production launcher is run from a clean Git checkout;
+- a real one-epoch GH200 smoke succeeds.
+
+## Persistent outputs
+
+The published `object_expert/seed_<seed>/` directory contains:
+
+- `checkpoints/object_expert_final.pt`: final model state only;
+- `scores/object_val_scores.npz`: raw logits and true-class margins;
+- `scores/object_score_summary.json`;
+- `metrics/epoch_metrics.csv`;
+- resolved configuration and runtime provenance;
+- a Phase 0-bound receipt and artifact hashes.
+
+The score archive contains exactly:
+
+```text
+sample_id
+true_label
+object_logits
+object_true_class_margin
+object_predicted_class
+object_correct
+```
+
+No intermediate expert checkpoints are saved.
+
+## Submit on Tigris
+
+Choose and record the expert seed explicitly:
+
+```bash
+export SETV_OBJECT_SEED=...
+bash scripts/submit_phase1_object.sh
+```
+
+The launcher submits:
+
+```text
+real one-epoch GH200 smoke
+  -> afterok
+20-epoch production training and verification
+```
+

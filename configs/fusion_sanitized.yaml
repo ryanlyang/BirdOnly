@@ -1,0 +1,28 @@
+schema_version: 1
+phase: sanitized_fusion
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+object_expert_dir: null
+sanitized_expert_dir: null
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/fusion_sanitized
+allow_expert_sanity_warnings: false
+
+fusion:
+  seed: null
+  hard:
+    min_examples_per_class: 5
+  rank:
+    clip_minimum: 0.001
+  logistic:
+    n_folds: 5
+    n_repeats: 5
+    penalty: l2
+    C: 1.0
+    class_weight: balanced
+    solver: lbfgs
+    max_iter: 1000
+  weighting:
+    alphas: [0.5, 1.0, 2.0, 4.0]
+    percentile_clip_minimum: 0.001
+    ess_warning_threshold: 10.0
+

@@ -1,0 +1,43 @@
+schema_version: 1
+phase: sanitized_mask_bank
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/sanitized_mask_bank
+
+mask_bank:
+  seed: null
+  masks_per_image: 8
+  families: [rectangle, ellipse, smooth_blob]
+  family_allocation: globally_balanced_sample_hash_3_3_2
+  dilation_pixels_at_224: 8
+  dilation_structuring_element: euclidean_disk
+  target_area_fraction_range: [0.35, 0.60]
+  target_aspect_ratio_range: [0.75, 1.3333333333333333]
+  center_jitter_fraction: 0.10
+  containment_slack: 1.08
+  blob_harmonics: 4
+  blob_amplitude: 0.12
+  algorithm_version: setv_sanitized_v1
+
+auditor:
+  heldout_image_fraction: 0.20
+  maximum_balanced_accuracy: 0.53
+  bootstrap_repetitions: 1000
+  bootstrap_confidence: 0.95
+  logistic:
+    C: 1.0
+    class_weight: balanced
+    solver: lbfgs
+    max_iter: 1000
+  gradient_boosted_trees:
+    n_estimators: 100
+    learning_rate: 0.05
+    max_depth: 3
+  small_cnn:
+    epochs: 10
+    batch_size: 128
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    pooled_resolution: 56
+    device: cuda
+

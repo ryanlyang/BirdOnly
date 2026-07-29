@@ -1,0 +1,40 @@
+schema_version: 1
+phase: object_expert
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/object_expert
+
+model:
+  architecture: vit_small_patch16_224
+  pretrained: true
+  num_classes: 2
+  normalization_mean: [0.485, 0.456, 0.406]
+  normalization_std: [0.229, 0.224, 0.225]
+
+input:
+  green_rgb: [0, 255, 0]
+  preserve_original_position: true
+  preserve_original_scale: true
+  center_or_reposition: false
+
+training:
+  seed: null
+  epochs: 20
+  optimizer: AdamW
+  learning_rate: 0.00003
+  weight_decay: 0.05
+  batch_size: 64
+  evaluation_batch_size: 128
+  scheduler: cosine
+  warmup_epochs: 2
+  label_smoothing: 0.0
+  mixed_precision: true
+  num_workers: 8
+  device: cuda
+
+storage:
+  save_final_checkpoint: true
+  save_intermediate_checkpoints: false
+  checkpoint_filename: object_expert_final.pt
+  scores_filename: object_val_scores.npz
+

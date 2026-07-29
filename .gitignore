@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Generated research artifacts belong in persistent campaign storage, not Git.
+outputs/
+phase0/
+run_logs/
+submission_receipts/
+*.pt
+*.pth
+*.ckpt
+*.npz
+

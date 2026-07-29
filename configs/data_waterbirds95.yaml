@@ -1,0 +1,46 @@
+schema_version: 1
+project_name: setv_waterbirds95
+
+data:
+  dataset_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+  metadata_csv: metadata.csv
+  image_column: img_filename
+  sample_id_column: img_id
+  target_column: y
+  place_column: place
+  official_split_column: split
+  official_split_values:
+    train: 0
+    oracle_val: 1
+    test: 2
+
+masks:
+  root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+  allowed_extensions: [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"]
+  mapping_mode: relative_stem_then_unique_basename
+  threshold_normalized: 0.5
+  foreground_is_high: true
+  require_same_dimensions: true
+  minimum_foreground_fraction: 0.001
+  maximum_foreground_fraction: 0.95
+
+split:
+  candidate_train_fraction: 0.8
+  seed: 1729
+
+transforms:
+  image_size: 224
+  evaluation_resize_shortest: 256
+  train_random_resized_crop_scale: [0.7, 1.0]
+  train_random_resized_crop_ratio: [0.75, 1.3333333333333333]
+  train_horizontal_flip_probability: 0.5
+
+audit:
+  visual_samples_per_split: 20
+  visual_seed: 1729
+  contact_sheet_columns: 5
+  thumbnail_size: 224
+
+output:
+  phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+

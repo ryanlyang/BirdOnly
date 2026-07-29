@@ -1,0 +1,46 @@
+schema_version: 1
+phase: phase6_analysis
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+candidate_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/candidate_erm
+candidate_seeds: []
+ula_proxy_dir: null
+fusion_dirs:
+  exact: null
+  sanitized: null
+  set: null
+output_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase6
+
+selection:
+  score_tolerance: 0.00000001
+  regret_tie_threshold: 0.005
+  spearman_tie_threshold: 0.02
+  minimum_candidate_seeds: 3
+  choose_expert_and_fusion_jointly: true
+  primary_criteria:
+    - mean_oracle_selection_regret
+    - worst_oracle_selection_regret
+    - mean_spearman
+    - mean_kendall
+    - mean_pairwise_ranking_accuracy
+
+# Populate measured leakage/stability fields before a production tie-break when
+# comparable values exist. Null means unavailable and is explicitly recorded.
+expert_metadata:
+  exact:
+    leakage_balanced_accuracy: null
+    view_margin_std: null
+    simplicity_rank: 1
+  sanitized:
+    leakage_balanced_accuracy: null
+    view_margin_std: null
+    simplicity_rank: 2
+  set:
+    leakage_balanced_accuracy: null
+    view_margin_std: null
+    simplicity_rank: 3
+
+test_policy:
+  reporting_only: true
+  load_only_after_hashed_freeze: true
+  print_before_freeze: false

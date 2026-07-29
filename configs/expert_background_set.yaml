@@ -1,0 +1,51 @@
+schema_version: 1
+phase: background_set
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/background_set
+
+model:
+  architecture: vit_small_patch16_224
+  pretrained: true
+  num_classes: 2
+  embedding_dim: 384
+  transformer_blocks: 4
+  attention_heads: 6
+  mlp_ratio: 4
+  dropout: 0.1
+  normalization_mean: [0.485, 0.456, 0.406]
+  normalization_std: [0.229, 0.224, 0.225]
+
+input:
+  patch_size: 16
+  dilation_pixels_at_224: 8
+  dilation_structuring_element: euclidean_disk
+  maximum_foreground_fraction: 0.01
+  max_background_tokens: 180
+  min_background_tokens: 16
+  coarse_spatial_bins_per_axis: 3
+  use_dense_position_embeddings: false
+
+training:
+  seed: null
+  epochs: 30
+  optimizer: AdamW
+  learning_rate: 0.0001
+  weight_decay: 0.05
+  batch_size: 64
+  evaluation_batch_size: 16
+  scheduler: cosine
+  warmup_epochs: 3
+  token_dropout: 0.20
+  validation_views: 8
+  label_smoothing: 0.0
+  mixed_precision: true
+  num_workers: 8
+  device: cuda
+
+storage:
+  save_final_checkpoint: true
+  save_intermediate_checkpoints: false
+  checkpoint_filename: background_set_final.pt
+  scores_filename: background_set_val_scores.npz
+

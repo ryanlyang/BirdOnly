@@ -1,0 +1,47 @@
+schema_version: 1
+phase: candidate_erm
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+fusion_dirs:
+  exact: null
+  sanitized: null
+  set: null
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/candidate_erm
+
+model:
+  architecture: vit_small_patch16_224
+  pretrained: true
+  num_classes: 2
+  normalization_mean: [0.485, 0.456, 0.406]
+  normalization_std: [0.229, 0.224, 0.225]
+
+training:
+  seed: null
+  epochs: 50
+  optimizer: AdamW
+  learning_rate: 0.00003
+  weight_decay: 0.05
+  batch_size: 64
+  evaluation_batch_size: 64
+  scheduler: cosine
+  warmup_epochs: 5
+  label_smoothing: 0.0
+  mixed_precision: true
+  num_workers: 8
+  device: cuda
+
+selectors:
+  score_tolerance: 0.00000001
+  hard_min_examples_per_class: 5
+  alphas: [0.5, 1.0, 2.0, 4.0]
+  ess_warning_threshold: 10.0
+  ula_phase: 6
+  pseudo_group_tie_break: [ordinary_accuracy, ordinary_loss, earlier_epoch]
+
+storage:
+  save_all_candidate_checkpoints: false
+  save_rolling_selected_checkpoints: true
+  deduplicate_checkpoints_by_epoch: true
+  save_biased_val_logits_every_epoch: true
+  test_metrics_reporting_only: true
+  hide_test_until_selection_receipt: true

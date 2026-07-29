@@ -1,0 +1,33 @@
+schema_version: 1
+phase: ula_proxy
+
+phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
+official_repo: /home/ryreu/SETV/uLA
+ssl_checkpoint: null
+output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/ula_proxy
+
+method:
+  label: uLA-style
+  official_upstream: https://github.com/tsirif/uLA
+  official_commit: 5867fb6e9a8485ed08b4cbe84900f2b5ac4fac5d
+  ssl_method: mocov2plus
+  ssl_backbone: resnet50
+  proxy: frozen_ssl_encoder_linear_target_classifier
+  proxy_groups: [proxy_prediction, true_label]
+  validation_metric: mean_nonempty_proxy_group_accuracy
+
+training:
+  seed: null
+  epochs: 50
+  optimizer: SGD
+  learning_rate: 0.0001
+  momentum: 0.9
+  weight_decay: 0.0
+  batch_size: 64
+  evaluation_batch_size: 64
+  freeze_ssl_encoder: true
+  augmentation: official_waterbirds_minimal
+  calibration: none
+  mixed_precision: true
+  num_workers: 8
+  device: cuda
