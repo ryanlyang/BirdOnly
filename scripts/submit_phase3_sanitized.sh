@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-for name in SETV_OBJECT_SEED SETV_MASK_SEED SETV_SANITIZED_SEED SETV_FUSION_SEED; do
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/load_campaign_env.sh"
+
+for name in SETV_OBJECT_SEED SETV_MASK_SEED SETV_SANITIZED_SEED SETV_SANITIZED_FUSION_SEED; do
   if [[ -z "${!name:-}" || ! "${!name}" =~ ^[0-9]+$ ]]; then
     echo "$name must be an explicitly frozen nonnegative integer" >&2
     exit 2
   fi
 done
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SETV_REPO=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
+ROOT=$SETV_CAMPAIGN_ROOT
 OBJECT="${ROOT}/object_expert/seed_${SETV_OBJECT_SEED}"
 BANK="${ROOT}/sanitized_mask_bank/seed_${SETV_MASK_SEED}"
 SANITIZED="${ROOT}/background_sanitized/seed_${SETV_SANITIZED_SEED}"
-FUSION="${ROOT}/fusion_sanitized/object_${SETV_OBJECT_SEED}_sanitized_${SETV_SANITIZED_SEED}_fusion_${SETV_FUSION_SEED}"
+FUSION="${ROOT}/fusion_sanitized/object_${SETV_OBJECT_SEED}_sanitized_${SETV_SANITIZED_SEED}_fusion_${SETV_SANITIZED_FUSION_SEED}"
 mkdir -p "${ROOT}/run_logs" "${ROOT}/preflight" "${ROOT}/submission_receipts" \
   "${ROOT}/sanitized_mask_bank" "${ROOT}/background_sanitized" "${ROOT}/fusion_sanitized"
 
@@ -40,7 +42,11 @@ if [[ -n "$(squeue -h -u "$USER" -n setv_sanitized_audit,setv_sanitized_smoke,se
   exit 2
 fi
 
-export SETV_REPO SETV_OBJECT_SEED SETV_MASK_SEED SETV_SANITIZED_SEED SETV_FUSION_SEED
+preflight_report="${ROOT}/preflight/phase3_submission_$(date -u +%Y%m%dT%H%M%SZ)_${BASHPID}.json"
+bash "${SCRIPT_DIR}/run_submission_preflight.sh" phase3 "$preflight_report"
+preflight_sha=$(sha256sum "$preflight_report" | awk '{print $1}')
+
+export SETV_REPO SETV_OBJECT_SEED SETV_MASK_SEED SETV_SANITIZED_SEED SETV_SANITIZED_FUSION_SEED
 audit_raw=$(sbatch --parsable --export=ALL "${SETV_REPO}/slurm/phase3_sanitized_audit.sbatch")
 audit_id=${audit_raw%%;*}
 smoke_raw=$(sbatch --parsable --dependency="afterok:${audit_id}" --export=ALL \
@@ -60,13 +66,16 @@ receipt="${ROOT}/submission_receipts/phase3_sanitized_${fusion_id}.txt"
   echo "object_seed=$SETV_OBJECT_SEED"
   echo "mask_seed=$SETV_MASK_SEED"
   echo "sanitized_expert_seed=$SETV_SANITIZED_SEED"
-  echo "fusion_seed=$SETV_FUSION_SEED"
+  echo "fusion_seed=$SETV_SANITIZED_FUSION_SEED"
   echo "audit_job_id=$audit_id"
   echo "smoke_job_id=$smoke_id"
   echo "train_job_id=$train_id"
   echo "fusion_job_id=$fusion_id"
   echo "dependencies=${audit_id}->${smoke_id}->${train_id}->${fusion_id}"
   echo "commit=$commit"
+  echo "campaign_manifest=$SETV_CAMPAIGN_CONFIG"
+  echo "preflight_report=$preflight_report"
+  echo "preflight_sha256=$preflight_sha"
   echo "object_scores_sha256=$(sha256sum "${OBJECT}/scores/object_val_scores.npz" | awk '{print $1}')"
   echo "mask_config_sha256=$(sha256sum "${SETV_REPO}/configs/sanitized_mask_bank.yaml" | awk '{print $1}')"
   echo "expert_config_sha256=$(sha256sum "${SETV_REPO}/configs/expert_background_sanitized.yaml" | awk '{print $1}')"

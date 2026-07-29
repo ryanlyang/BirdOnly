@@ -70,6 +70,15 @@ class ULAConfigProvenanceTests(unittest.TestCase):
             **common,
         )
         self.assertTrue(config["selection"]["choose_expert_and_fusion_jointly"])
+        self.assertTrue(
+            config["expert_metadata"]["derive_from_verified_artifacts"]
+        )
+        self.assertEqual(
+            config["kill_criteria"][
+                "object_balanced_accuracy_near_chance_ceiling"
+            ],
+            0.55,
+        )
 
 
 if __name__ == "__main__":

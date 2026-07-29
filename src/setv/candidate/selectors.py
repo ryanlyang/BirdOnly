@@ -31,6 +31,11 @@ class ExpertFusionInput:
     fusion_dir: Path
     fusion: dict[str, Any]
     background_prediction: np.ndarray
+    # Production loaders retain the verified source artifact so Phase 6 can
+    # derive tie-break evidence without accepting manually entered metrics.
+    # Optional defaults keep small unit-test fixtures lightweight.
+    expert_dir: Path | None = None
+    background_scores: dict[str, np.ndarray] | None = None
 
 
 def load_selector_inputs(
@@ -91,6 +96,8 @@ def load_selector_inputs(
             fusion_dir=root,
             fusion=fusion,
             background_prediction=scores[prediction_key].astype(np.int64),
+            expert_dir=expert_dir,
+            background_scores=scores,
         )
     return output
 

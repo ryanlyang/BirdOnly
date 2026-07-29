@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/load_campaign_env.sh"
+
 : "${SETV_OBJECT_SEED:?Set SETV_OBJECT_SEED to the explicitly frozen integer seed}"
 if [[ ! "$SETV_OBJECT_SEED" =~ ^[0-9]+$ ]]; then
   echo "SETV_OBJECT_SEED must be a nonnegative integer" >&2
   exit 2
 fi
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SETV_REPO=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-CAMPAIGN_ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
+CAMPAIGN_ROOT=$SETV_CAMPAIGN_ROOT
 PHASE0_DIR="${CAMPAIGN_ROOT}/phase0"
 OUTPUT_DIR="${CAMPAIGN_ROOT}/object_expert/seed_${SETV_OBJECT_SEED}"
 LOG_DIR="${CAMPAIGN_ROOT}/run_logs"
@@ -40,6 +42,10 @@ if [[ -n "$(squeue -h -u "$USER" -n setv_obj_smoke,setv_obj_train 2>/dev/null)" 
   exit 2
 fi
 
+preflight_report="${PREFLIGHT_DIR}/phase1_submission_$(date -u +%Y%m%dT%H%M%SZ)_${BASHPID}.json"
+bash "${SCRIPT_DIR}/run_submission_preflight.sh" phase1 "$preflight_report"
+preflight_sha=$(sha256sum "$preflight_report" | awk '{print $1}')
+
 commit=$(git -C "$SETV_REPO" rev-parse HEAD)
 config_sha=$(sha256sum "${SETV_REPO}/configs/expert_object_green.yaml" | awk '{print $1}')
 plan_sha=$(sha256sum "${SETV_REPO}/SETV_Waterbirds95_Implementation_Plan_v2.md" | awk '{print $1}')
@@ -65,6 +71,9 @@ receipt="${RECEIPT_DIR}/phase1_object_seed${SETV_OBJECT_SEED}_${train_id}.txt"
   echo "dependency=afterok:${smoke_id}"
   echo "commit=$commit"
   echo "repo=$SETV_REPO"
+  echo "campaign_manifest=$SETV_CAMPAIGN_CONFIG"
+  echo "preflight_report=$preflight_report"
+  echo "preflight_sha256=$preflight_sha"
   echo "config_sha256=$config_sha"
   echo "implementation_plan_sha256=$plan_sha"
   echo "phase0_manifest_sha256=$phase0_manifest_sha"
@@ -75,4 +84,3 @@ receipt="${RECEIPT_DIR}/phase1_object_seed${SETV_OBJECT_SEED}_${train_id}.txt"
 echo "Submitted object-expert smoke ${smoke_id}"
 echo "Submitted object-expert training ${train_id} afterok:${smoke_id}"
 echo "Receipt: ${receipt}"
-

@@ -45,10 +45,10 @@ scoring accepts only aligned original-image candidate logits.
 
 ## Submit
 
+The launcher loads all three frozen seeds from
+`configs/campaign_waterbirds95.yaml`:
+
 ```bash
-export SETV_OBJECT_SEED=...
-export SETV_EXACT_SEED=...
-export SETV_FUSION_SEED=...
 bash scripts/submit_phase2_exact.sh
 ```
 

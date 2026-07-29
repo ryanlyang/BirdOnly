@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/load_campaign_env.sh"
+
 required=(
   SETV_CANDIDATE_SEEDS
   SETV_OBJECT_SEED
@@ -43,9 +46,8 @@ if (( ${#candidate_seeds[@]} < 3 )); then
   exit 2
 fi
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SETV_REPO=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
+ROOT=$SETV_CAMPAIGN_ROOT
 SETV_EXACT_FUSION_DIR="${ROOT}/fusion_exact/object_${SETV_OBJECT_SEED}_exact_${SETV_EXACT_SEED}_fusion_${SETV_EXACT_FUSION_SEED}"
 SETV_SANITIZED_FUSION_DIR="${ROOT}/fusion_sanitized/object_${SETV_OBJECT_SEED}_sanitized_${SETV_SANITIZED_SEED}_fusion_${SETV_SANITIZED_FUSION_SEED}"
 SETV_SET_FUSION_DIR="${ROOT}/fusion_set/object_${SETV_OBJECT_SEED}_set_${SETV_SET_SEED}_fusion_${SETV_SET_FUSION_SEED}"
@@ -78,6 +80,10 @@ if [[ -n "$(squeue -h -u "$USER" -n setv_candidate_smoke,setv_candidate_train 2>
   exit 2
 fi
 
+preflight_report="${ROOT}/preflight/phase5_submission_$(date -u +%Y%m%dT%H%M%SZ)_${BASHPID}.json"
+bash "${SCRIPT_DIR}/run_submission_preflight.sh" phase5 "$preflight_report"
+preflight_sha=$(sha256sum "$preflight_report" | awk '{print $1}')
+
 SETV_SMOKE_CANDIDATE_SEED=${candidate_seeds[0]}
 export SETV_REPO SETV_SMOKE_CANDIDATE_SEED
 export SETV_EXACT_FUSION_DIR SETV_SANITIZED_FUSION_DIR SETV_SET_FUSION_DIR
@@ -103,6 +109,9 @@ receipt="${ROOT}/submission_receipts/phase5_candidate_${smoke_id}.txt"
   echo "train_job_ids=${train_ids[*]}"
   echo "dependency=all trains afterok:${smoke_id}"
   echo "commit=$commit"
+  echo "campaign_manifest=$SETV_CAMPAIGN_CONFIG"
+  echo "preflight_report=$preflight_report"
+  echo "preflight_sha256=$preflight_sha"
   echo "exact_fusion=$SETV_EXACT_FUSION_DIR"
   echo "sanitized_fusion=$SETV_SANITIZED_FUSION_DIR"
   echo "set_fusion=$SETV_SET_FUSION_DIR"

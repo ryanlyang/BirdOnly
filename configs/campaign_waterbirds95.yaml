@@ -1,0 +1,45 @@
+schema_version: 1
+campaign_id: setv_waterbirds95_private_pilot_v1
+scientific_plan: SETV_Waterbirds95_Implementation_Plan_v2.md
+compute_handoff: TIGRIS_RESEARCH_COMPUTE_HANDOFF.md
+runtime_config: configs/runtime_tigris.yaml
+
+paths:
+  repository: /home/ryreu/guided_cnn/BirdOnly
+  campaign_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
+  dataset_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+  mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+  ula_repository: /home/ryreu/guided_cnn/BirdOnly/uLA
+  main_environment: /home/ryreu/miniforge3-aarch64/envs/fcv_gh200
+
+# These arbitrary but fixed namespaces are frozen before the first production
+# run. Changing one after Phase 0 requires a new campaign ID and output root.
+seeds:
+  split: 1729
+  visual_audit: 1729
+  object_expert: 1101
+  exact_background_expert: 1201
+  sanitized_mask_bank: 1301
+  sanitized_background_expert: 1302
+  set_background_expert: 1401
+  fusion:
+    exact: 2101
+    sanitized: 2201
+    set: 2301
+  candidate_erm: [3101, 3102, 3103]
+  ula_proxy_and_ssl: 4101
+
+ula:
+  policy: official_ssl_first_then_explicit_external_checkpoint
+  legacy_environment: null
+  external_official_ssl_checkpoint: null
+  method_label: uLA-style
+
+policy:
+  minimum_candidate_seeds: 3
+  clean_git_required: true
+  overwrite_existing_outputs: false
+  test_reporting_only: true
+  hide_test_until_hashed_freeze: true
+  require_gh200_smoke_per_training_phase: true
+  require_ula_smoke_before_phase6: true

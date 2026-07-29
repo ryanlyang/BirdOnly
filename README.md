@@ -7,6 +7,12 @@ The scientific source of truth is
 `SETV_Waterbirds95_Implementation_Plan_v2.md`. The Tigris execution rules are
 in `TIGRIS_RESEARCH_COMPUTE_HANDOFF.md`.
 
+The frozen production paths and seeds are in
+`configs/campaign_waterbirds95.yaml`. Every production launcher validates and
+loads that manifest and writes a fail-closed preflight receipt before calling
+Slurm. Follow `docs/TIGRIS_CAMPAIGN_RUNBOOK.md` for the complete staged launch,
+monitoring, test-isolation, and recovery procedure.
+
 ## Phase 0
 
 Phase 0 provides:
@@ -59,10 +65,9 @@ Phase 0 does not train an expert or candidate model.
 ## Phase 1
 
 Phase 1 implements the object-only ViT-S/16 expert. It requires an approved
-Phase 0 directory and an explicitly frozen seed:
+Phase 0 directory. The seed is loaded from the frozen campaign manifest:
 
 ```bash
-export SETV_OBJECT_SEED=...
 bash scripts/submit_phase1_object.sh
 ```
 
@@ -106,3 +111,15 @@ deduplicated by epoch. Oracle metrics are isolated under `analysis_only`, and
 test metrics are not published until the realistic selection receipt has been
 hash-frozen. The production launcher requires at least three candidate seeds.
 See `docs/PHASE5_CANDIDATE_TRAJECTORY.md`.
+
+## Phase 6
+
+Phase 6 implements the `uLA-style` baseline, joint expert-fusion selection
+across at least three candidate seeds, method freezing, diagnostic kill
+criteria, and reporting-only test publication. Its launcher gates production
+behind a real GH200 uLA compatibility smoke. The smoke either executes one
+official MoCoV2+ epoch in the explicitly supplied legacy environment or
+verifies the exact external official checkpoint, then runs a real
+checkpoint-loading and frozen-linear-proxy update in the confirmed Tigris
+environment. There is no silent fallback. See
+`docs/PHASE6_ULA_AND_FROZEN_ANALYSIS.md`.

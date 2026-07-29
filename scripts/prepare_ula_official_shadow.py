@@ -19,10 +19,31 @@ from setv.utils.hashing import sha256_file
 from setv.utils.io import write_json
 
 
+def _smoke_subset(frame: pd.DataFrame, maximum: int) -> pd.DataFrame:
+    if maximum < 2 or maximum % 2:
+        raise ValueError(
+            "Smoke shadow requires an even maximum of at least two per split"
+        )
+    selected = []
+    per_class = maximum // 2
+    for class_id in (0, 1):
+        rows = frame[frame["y"] == class_id].sort_values(
+            "sample_id", kind="stable"
+        )
+        if len(rows) < per_class:
+            raise ValueError(
+                f"Smoke shadow lacks {per_class} class-{class_id} samples"
+            )
+        selected.append(rows.iloc[:per_class])
+    result = pd.concat(selected, ignore_index=True)
+    return result.sort_values("sample_id", kind="stable").reset_index(drop=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase0-dir", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--smoke-samples-per-split", type=int)
     args = parser.parse_args()
     phase0 = Path(args.phase0_dir).expanduser().resolve()
     output = Path(args.output_dir).expanduser().resolve()
@@ -41,6 +62,8 @@ def main() -> int:
             phase0 / "splits" / f"waterbirds95_{split_name}.csv",
             dtype={"sample_id": str},
         )
+        if args.smoke_samples_per_split is not None:
+            frame = _smoke_subset(frame, args.smoke_samples_per_split)
         frame = frame[["sample_id", "img_filename", "y"]].copy()
         frame["img_filename"] = frame["img_filename"].map(
             lambda value: str((dataset_root / str(value)).resolve())
@@ -65,6 +88,16 @@ def main() -> int:
         "official_test_loader_uses_duplicated_biased_val": True,
         "candidate_train_count": len(frames[0]),
         "biased_val_count": len(frames[1]),
+        "smoke_subset": args.smoke_samples_per_split is not None,
+        "smoke_samples_per_split_requested": args.smoke_samples_per_split,
+        "smoke_sample_ids": (
+            {
+                "candidate_train": frames[0]["sample_id"].astype(str).tolist(),
+                "biased_val": frames[1]["sample_id"].astype(str).tolist(),
+            }
+            if args.smoke_samples_per_split is not None
+            else None
+        ),
         "metadata_sha256": sha256_file(output / "metadata.csv"),
     }
     write_json(output / "shadow_receipt.json", receipt)

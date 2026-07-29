@@ -156,6 +156,36 @@ def validate_phase6_config(config: dict[str, Any]) -> None:
             "mean_kendall",
             "mean_pairwise_ranking_accuracy",
         ],
+        ("expert_metadata", "derive_from_verified_artifacts"): True,
+        (
+            "expert_metadata",
+            "leakage_metric",
+        ): "maximum_heldout_mask_balanced_accuracy",
+        (
+            "expert_metadata",
+            "stability_metric",
+        ): "mean_per_image_view_margin_std",
+        (
+            "expert_metadata",
+            "missing_metric_policy",
+        ): "skip_unless_comparable_for_all_tied_experts",
+        ("expert_metadata", "simplicity_rank"): {
+            "exact": 1,
+            "sanitized": 2,
+            "set": 3,
+        },
+        (
+            "kill_criteria",
+            "object_balanced_accuracy_near_chance_ceiling",
+        ): 0.55,
+        (
+            "kill_criteria",
+            "background_margin_standard_deviation_floor",
+        ): 0.001,
+        ("kill_criteria", "essentially_identical_epoch_tolerance"): 1,
+        ("kill_criteria", "high_score_quantile"): 0.90,
+        ("kill_criteria", "high_score_accuracy_tolerance"): 0.0,
+        ("kill_criteria", "selector_regret_improvement_tolerance"): 0.0,
         ("test_policy", "reporting_only"): True,
         ("test_policy", "load_only_after_hashed_freeze"): True,
         ("test_policy", "print_before_freeze"): False,

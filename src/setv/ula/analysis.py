@@ -21,6 +21,7 @@ from setv.candidate.train import verify_candidate
 from setv.errors import ArtifactExistsError, DataValidationError
 from setv.experts.train_object import _artifact_manifest, _load_phase0_config
 from setv.phase0 import BASE_ARTIFACT_MANIFEST, verify_phase0
+from setv.fusion.core import continuous_setv, within_class_percentile
 from setv.ula.config import resolved_config
 from setv.ula.proxy import load_ula_proxy_scores, verify_ula_proxy
 from setv.ula.validation import select_ula_epoch
@@ -203,6 +204,8 @@ def _load_seed(
         "curves": curves,
         "oracle_curve": oracle_curve,
         "oracle_epochs": oracle_epochs,
+        "candidate_logits": trajectory["candidate_logits"].astype(np.float32),
+        "candidate_correct": trajectory["candidate_correct"].astype(np.uint8),
     }
 
 
@@ -233,8 +236,87 @@ def _aggregate(seeds: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return output
 
 
+def _curve_metrics(
+    curve: np.ndarray, oracle_curve: np.ndarray, tolerance: float
+) -> dict[str, Any]:
+    best_epoch = int(np.flatnonzero(curve >= curve.max() - tolerance)[0] + 1)
+    oracle_max = float(oracle_curve.max())
+    pairwise = pairwise_ranking_accuracy(curve, oracle_curve, tolerance)
+    return {
+        "selected_epoch": best_epoch,
+        "oracle_val_wga": float(oracle_curve[best_epoch - 1]),
+        "oracle_selection_regret": float(
+            oracle_max - oracle_curve[best_epoch - 1]
+        ),
+        "spearman": spearman_correlation(curve, oracle_curve),
+        "kendall_tau_b": kendall_tau_b(curve, oracle_curve),
+        "pairwise_epoch_ranking_accuracy": pairwise["accuracy"],
+        "pairwise_details": pairwise,
+    }
+
+
+def _background_confidence_baselines(
+    seeds: list[dict[str, Any]],
+    selector_inputs: dict[str, Any],
+    labels: np.ndarray,
+    tolerance: float,
+) -> dict[str, Any]:
+    """Evaluate a diagnostic background-confidence-only weighting baseline."""
+
+    per_seed: dict[str, dict[str, Any]] = {}
+    aggregate: dict[str, Any] = {}
+    for expert, source in selector_inputs.items():
+        background_margin = np.asarray(
+            source.fusion.get(
+                "background_true_class_margin",
+                source.fusion["rank"]["background_percentile"],
+            ),
+            dtype=np.float64,
+        )
+        # Low true-class background margin means stronger background conflict.
+        weights = within_class_percentile(-background_margin, labels)
+        expert_metrics = []
+        for seed in seeds:
+            curve = np.asarray(
+                [
+                    continuous_setv(logits, labels, weights)["setv_score"]
+                    for logits in seed["candidate_logits"]
+                ],
+                dtype=np.float64,
+            )
+            metrics = _curve_metrics(curve, seed["oracle_curve"], tolerance)
+            metrics["curve"] = curve.tolist()
+            per_seed.setdefault(str(seed["seed"]), {})[expert] = metrics
+            expert_metrics.append(metrics)
+        aggregate[expert] = {
+            "mean_oracle_selection_regret": float(
+                np.mean(
+                    [value["oracle_selection_regret"] for value in expert_metrics]
+                )
+            ),
+            "worst_oracle_selection_regret": float(
+                np.max(
+                    [value["oracle_selection_regret"] for value in expert_metrics]
+                )
+            ),
+            "mean_spearman": float(
+                np.mean([value["spearman"] for value in expert_metrics])
+            ),
+            "selected_epochs": [
+                value["selected_epoch"] for value in expert_metrics
+            ],
+            "definition": (
+                "within-class percentile of negative background true-class "
+                "margin, scored with the locked SETV alpha ensemble"
+            ),
+        }
+    return {"per_seed": per_seed, "aggregate": aggregate}
+
+
 def _joint_choice(
-    aggregate: dict[str, dict[str, Any]], config: dict[str, Any]
+    aggregate: dict[str, dict[str, Any]],
+    expert_metadata: dict[str, dict[str, Any]],
+    config: dict[str, Any],
 ) -> dict[str, Any]:
     names = [
         f"setv.{expert}.{fusion}"
@@ -271,8 +353,8 @@ def _joint_choice(
         )
         <= spearman_threshold
     ]
-    metadata = config["expert_metadata"]
-    tied_experts = [name.split(".")[1] for name in tied]
+    metadata = expert_metadata
+    tied_experts = sorted({name.split(".")[1] for name in tied})
     leakage_comparable = all(
         metadata[expert].get("leakage_balanced_accuracy") is not None
         for expert in tied_experts
@@ -317,6 +399,77 @@ def _joint_choice(
         },
         "selected_metrics": aggregate[winner],
     }
+
+
+def _derive_expert_metadata(
+    selector_inputs: dict[str, Any], config: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Derive secondary tie evidence from already verified production artifacts.
+
+    Exact fill and the set expert do not have the held-out sanitized-mask auditor,
+    so that leakage number is deliberately unavailable for them. Exact fill is a
+    deterministic single view, so an eight-view stability statistic would not be
+    comparable either. Missing values are recorded and cause the corresponding
+    secondary criterion to be skipped.
+    """
+
+    ranks = config["expert_metadata"]["simplicity_rank"]
+    output: dict[str, dict[str, Any]] = {}
+    for name in ("exact", "sanitized", "set"):
+        source = selector_inputs[name]
+        scores = source.background_scores
+        item: dict[str, Any] = {
+            "leakage_balanced_accuracy": None,
+            "leakage_source": None,
+            "leakage_unavailable_reason": (
+                "no comparable held-out mask-geometry auditor artifact"
+            ),
+            "view_margin_std": None,
+            "stability_source": None,
+            "stability_unavailable_reason": (
+                "verified source score payload unavailable"
+                if scores is None
+                else "expert has no comparable stochastic eight-view statistic"
+            ),
+            "simplicity_rank": int(ranks[name]),
+            "derivation": "verified_artifacts",
+        }
+        if scores is not None:
+            stability_key = {
+                "sanitized": "background_sanitized_margin_std",
+                "set": "background_set_margin_std",
+            }.get(name)
+            if stability_key is not None and stability_key in scores:
+                values = np.asarray(scores[stability_key], dtype=np.float64)
+                item["view_margin_std"] = float(values.mean())
+                item["stability_source"] = stability_key
+                item["stability_unavailable_reason"] = None
+        if name == "sanitized" and source.expert_dir is not None:
+            receipt_path = source.expert_dir / "phase3_sanitized_receipt.json"
+            if receipt_path.is_file():
+                expert_receipt = _json(receipt_path)
+                bank_dir = Path(expert_receipt["mask_bank_dir"])
+                bank_receipt_path = bank_dir / "sanitized_mask_bank_receipt.json"
+                if bank_receipt_path.is_file():
+                    bank_receipt = _json(bank_receipt_path)
+                    audit_path = bank_dir / bank_receipt["leakage_audit"]["path"]
+                    audit = _json(audit_path)
+                    measured = [
+                        float(value["heldout_mask_balanced_accuracy"])
+                        for value in audit.get("auditors", {}).values()
+                        if value.get("heldout_mask_balanced_accuracy") is not None
+                    ]
+                    if measured:
+                        item["leakage_balanced_accuracy"] = max(measured)
+                        item["leakage_source"] = {
+                            "path": str(audit_path),
+                            "sha256": sha256_file(audit_path),
+                            "aggregation": "maximum_across_heldout_mask_auditors",
+                            "auditor_count": len(measured),
+                        }
+                        item["leakage_unavailable_reason"] = None
+        output[name] = item
+    return output
 
 
 def _expert_dominance(
@@ -417,6 +570,85 @@ def _svg_scatter(
         )
     parts.append("</svg>")
     path.write_text("\n".join(parts), encoding="utf-8")
+
+
+def _svg_series(
+    path: Path,
+    series: dict[str, list[tuple[float, float]]],
+    *,
+    title: str,
+    x_label: str,
+    y_label: str,
+    points: bool = False,
+) -> None:
+    usable = {
+        label: values for label, values in series.items() if len(values) > 0
+    }
+    if not usable:
+        path.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="300">'
+            '<rect width="100%" height="100%" fill="white"/>'
+            f'<text x="400" y="35" text-anchor="middle" font-size="18">{title}</text>'
+            '<text x="400" y="155" text-anchor="middle" font-size="15">'
+            "No diagnostic values were available</text></svg>",
+            encoding="utf-8",
+        )
+        return
+    width, height, margin = 1000, 620, 75
+    colors = ("#3973ac", "#c94c4c", "#3a923a", "#8e5ea2", "#d48806", "#444444")
+    all_x = [x for values in usable.values() for x, _ in values]
+    all_y = [y for values in usable.values() for _, y in values]
+    x_min, x_max = min(all_x), max(all_x)
+    y_min, y_max = min(all_y), max(all_y)
+    x_span = max(1e-12, x_max - x_min)
+    y_span = max(1e-12, y_max - y_min)
+
+    def project(value_x: float, value_y: float) -> tuple[float, float]:
+        return (
+            margin + (value_x - x_min) / x_span * (width - 2 * margin),
+            height - margin - (value_y - y_min) / y_span * (height - 2 * margin),
+        )
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        f'<text x="{width/2}" y="28" text-anchor="middle" font-size="18">{title}</text>',
+        f'<line x1="{margin}" y1="{height-margin}" x2="{width-margin}" '
+        f'y2="{height-margin}" stroke="black"/>',
+        f'<line x1="{margin}" y1="{margin}" x2="{margin}" '
+        f'y2="{height-margin}" stroke="black"/>',
+        f'<text x="{width/2}" y="{height-18}" text-anchor="middle">{x_label}</text>',
+        f'<text x="20" y="{height/2}" text-anchor="middle" '
+        f'transform="rotate(-90 20,{height/2})">{y_label}</text>',
+    ]
+    for index, (label, values) in enumerate(usable.items()):
+        color = colors[index % len(colors)]
+        projected = [project(x, y) for x, y in sorted(values)]
+        if not points:
+            coordinates = " ".join(f"{x:.2f},{y:.2f}" for x, y in projected)
+            parts.append(
+                f'<polyline points="{coordinates}" fill="none" stroke="{color}" '
+                'stroke-width="2"/>'
+            )
+        for x, y in projected:
+            parts.append(
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="2.8" fill="{color}" '
+                'fill-opacity="0.65"/>'
+            )
+        legend_y = 52 + 18 * index
+        parts.append(
+            f'<rect x="{width-245}" y="{legend_y-10}" width="12" height="12" '
+            f'fill="{color}"/><text x="{width-226}" y="{legend_y}" '
+            f'font-size="12">{label}</text>'
+        )
+    parts.append("</svg>")
+    path.write_text("\n".join(parts), encoding="utf-8")
+
+
+def _histogram_series(values: np.ndarray, bins: int = 20) -> list[tuple[float, float]]:
+    counts, edges = np.histogram(np.asarray(values, dtype=np.float64), bins=bins)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return [(float(x), float(y)) for x, y in zip(centers, counts)]
 
 
 def _contact_sheet(
@@ -528,6 +760,43 @@ def _diagnostics(
                 for index, count in enumerate(counts)
             )
         _write_csv(diagnostic_root / f"{name}_margin_histograms.csv", histogram_rows)
+        _svg_series(
+            staging / "plots" / f"{name}_expert_margin_histograms.svg",
+            {
+                "object margin": _histogram_series(object_margin),
+                "background margin": _histogram_series(background_margin),
+            },
+            title=f"{name.capitalize()} expert margin distributions",
+            x_label="true-class margin",
+            y_label="count",
+        )
+        _svg_series(
+            staging / "plots" / f"{name}_object_vs_background_margin.svg",
+            {
+                "biased-validation images": [
+                    (float(x), float(y))
+                    for x, y in zip(object_margin, background_margin)
+                ]
+            },
+            title=f"{name.capitalize()}: object versus background margin",
+            x_label="object true-class margin",
+            y_label="background true-class margin",
+            points=True,
+        )
+        fusion_distributions = {
+            "rank": _histogram_series(rank["q_rank"]),
+        }
+        if fusion["logistic"]["available"]:
+            fusion_distributions["logistic OOF"] = _histogram_series(
+                fusion["logistic"]["q_logistic"]
+            )
+        _svg_series(
+            staging / "plots" / f"{name}_fusion_score_distributions.svg",
+            fusion_distributions,
+            title=f"{name.capitalize()} fusion-score distributions",
+            x_label="fusion score",
+            y_label="count",
+        )
         _contact_sheet(
             gallery_root / f"{name}_top_rank.png",
             Path(config["phase0_dir"]),
@@ -605,6 +874,11 @@ def _diagnostics(
     )
     decile_rows = []
     alpha_rows = []
+    hardness_rows = []
+    high_quantile = float(config["kill_criteria"]["high_score_quantile"])
+    high_tolerance = float(
+        config["kill_criteria"]["high_score_accuracy_tolerance"]
+    )
     for seed in seeds:
         candidate_dir = Path(seed["candidate_dir"])
         phase5 = _json(candidate_dir / "phase5_receipt.json")
@@ -625,6 +899,31 @@ def _diagnostics(
                     ("logistic", source.fusion["logistic"]["q_logistic"])
                 )
             for fusion_name, score_values in score_items:
+                threshold = float(np.quantile(score_values, high_quantile))
+                high = np.asarray(score_values) >= threshold
+                per_epoch_high = correct[:, high].mean(axis=1)
+                per_epoch_all = correct.mean(axis=1)
+                comparisons = per_epoch_high <= per_epoch_all + high_tolerance
+                hardness_rows.append(
+                    {
+                        "candidate_seed": seed["seed"],
+                        "expert": expert,
+                        "fusion": fusion_name,
+                        "high_score_quantile": high_quantile,
+                        "high_score_threshold": threshold,
+                        "high_score_sample_count": int(high.sum()),
+                        "epochs_high_score_at_or_below_overall": int(
+                            comparisons.sum()
+                        ),
+                        "candidate_epoch_count": int(len(comparisons)),
+                        "fraction_epochs_high_score_at_or_below_overall": float(
+                            comparisons.mean()
+                        ),
+                        "simply_hard_for_every_candidate": bool(
+                            comparisons.all()
+                        ),
+                    }
+                )
                 order = np.argsort(score_values, kind="mergesort")
                 deciles = np.empty(len(order), dtype=np.int64)
                 deciles[order] = np.minimum(
@@ -680,7 +979,86 @@ def _diagnostics(
                         )
     _write_csv(diagnostic_root / "candidate_fusion_deciles.csv", decile_rows)
     _write_csv(diagnostic_root / "representative_alpha_curves.csv", alpha_rows)
-    return expert_summary
+    _write_csv(diagnostic_root / "high_score_hardness.csv", hardness_rows)
+    decile_series_disagreement: dict[str, list[tuple[float, float]]] = {}
+    decile_series_accuracy: dict[str, list[tuple[float, float]]] = {}
+    for expert in ("exact", "sanitized", "set"):
+        for fusion_name in ("rank", "logistic"):
+            selected_rows = [
+                row
+                for row in decile_rows
+                if row["expert"] == expert and row["fusion"] == fusion_name
+            ]
+            if not selected_rows:
+                continue
+            label = f"{expert}.{fusion_name}"
+            available_deciles = sorted(
+                {int(row["decile"]) for row in selected_rows}
+            )
+            decile_series_disagreement[label] = [
+                (
+                    float(decile),
+                    float(
+                        np.mean(
+                            [
+                                row["mean_candidate_disagreement"]
+                                for row in selected_rows
+                                if row["decile"] == decile
+                            ]
+                        )
+                    ),
+                )
+                for decile in available_deciles
+            ]
+            decile_series_accuracy[label] = [
+                (
+                    float(decile),
+                    float(
+                        np.mean(
+                            [
+                                row["mean_candidate_accuracy"]
+                                for row in selected_rows
+                                if row["decile"] == decile
+                            ]
+                        )
+                    ),
+                )
+                for decile in available_deciles
+            ]
+    _svg_series(
+        staging / "plots" / "candidate_disagreement_by_fusion_decile.svg",
+        decile_series_disagreement,
+        title="Candidate disagreement by fusion-score decile",
+        x_label="fusion-score decile",
+        y_label="mean disagreement",
+    )
+    _svg_series(
+        staging / "plots" / "candidate_accuracy_by_fusion_decile.svg",
+        decile_series_accuracy,
+        title="Candidate accuracy by fusion-score decile",
+        x_label="fusion-score decile",
+        y_label="mean accuracy",
+    )
+    alpha_series: dict[str, list[tuple[float, float]]] = {}
+    for row in alpha_rows:
+        label = (
+            f"seed={row['candidate_seed']} epoch={row['epoch']} "
+            f"{row['selector']}"
+        )
+        alpha_series.setdefault(label, []).append(
+            (float(row["alpha"]), float(row["weighted_accuracy"]))
+        )
+    _svg_series(
+        staging / "plots" / "representative_setv_alpha_curves.svg",
+        alpha_series,
+        title="SETV alpha curves at representative epochs",
+        x_label="alpha",
+        y_label="weighted accuracy",
+    )
+    return {
+        "experts": expert_summary,
+        "high_score_hardness": hardness_rows,
+    }
 
 
 def build_phase6_analysis(
@@ -722,8 +1100,15 @@ def build_phase6_analysis(
             raise DataValidationError("Candidate seed references another Phase 0")
         seeds.append(value)
     aggregate = _aggregate(seeds)
-    choice = _joint_choice(aggregate, config)
+    biased_ids = proxy["sample_id"].astype(str)
+    labels = proxy["true_label"].astype(np.int64)
+    selector_inputs = load_selector_inputs(config["fusion_dirs"], biased_ids, labels)
+    expert_metadata = _derive_expert_metadata(selector_inputs, config)
+    choice = _joint_choice(aggregate, expert_metadata, config)
     dominance = _expert_dominance(seeds)
+    background_baselines = _background_confidence_baselines(
+        seeds, selector_inputs, labels, tolerance
+    )
 
     # Resolve the uLA-selected model state before any test report is opened.
     checkpoint_receipts = {}
@@ -738,10 +1123,11 @@ def build_phase6_analysis(
             staging / "selected_candidate_checkpoints" / f"seed_{seed['seed']}",
         )
 
-    biased_ids = proxy["sample_id"].astype(str)
-    labels = proxy["true_label"].astype(np.int64)
-    selector_inputs = load_selector_inputs(config["fusion_dirs"], biased_ids, labels)
     diagnostics = _diagnostics(staging, config, seeds, selector_inputs)
+    write_json(
+        staging / "analysis_only" / "background_confidence_baselines.json",
+        background_baselines,
+    )
     selection_only = {
         "schema_version": 1,
         "status": "frozen",
@@ -767,6 +1153,8 @@ def build_phase6_analysis(
         },
         "aggregate_selector_metrics": aggregate,
         "joint_expert_fusion_choice": choice,
+        "derived_expert_metadata": expert_metadata,
+        "background_confidence_baseline": background_baselines["aggregate"],
         "expert_dominance_audit": dominance,
         "test_metrics_seen": False,
         "test_metrics_used": False,
@@ -902,32 +1290,194 @@ def build_phase6_analysis(
         [row["mean_oracle_selection_regret"] for row in aggregate_rows],
         "Mean oracle selection regret across candidate seeds",
     )
-    kill = {
-        "object_expert_near_chance": None,
-        "background_margin_negligible_variation": None,
-        "hard_informative_examples_absent": any(
-            not value["hard_valid"] for value in diagnostics.values()
+    thresholds = config["kill_criteria"]
+    object_margins = np.asarray(
+        selector_inputs["exact"].fusion.get(
+            "object_true_class_margin",
+            selector_inputs["exact"].fusion["rank"]["object_percentile"],
         ),
-        "logistic_cross_fitting_degenerate": any(
-            not value["logistic"].get("available", False)
-            for value in diagnostics.values()
-        ),
-        "all_realistic_selectors_identical": len(
-            {
-                tuple(value["selected_epochs"])
-                for key, value in aggregate.items()
-                if key != "oracle"
-            }
+        dtype=np.float64,
+    )
+    for name in ("sanitized", "set"):
+        other = np.asarray(
+            selector_inputs[name].fusion.get(
+                "object_true_class_margin",
+                selector_inputs[name].fusion["rank"]["object_percentile"],
+            ),
+            dtype=np.float64,
         )
-        == 1,
-        "setv_fails_to_improve_mean_regret_over_ordinary": (
-            aggregate[choice["selected_configuration"]][
-                "mean_oracle_selection_regret"
+        if not np.allclose(object_margins, other, rtol=0, atol=1e-6):
+            raise DataValidationError(
+                "Fusion artifacts do not share one object-expert margin vector"
+            )
+    object_correct = object_margins > 0
+    object_balanced_accuracy = float(
+        np.mean(
+            [
+                object_correct[labels == class_id].mean()
+                for class_id in (0, 1)
             ]
-            >= aggregate["ordinary"]["mean_oracle_selection_regret"]
-        ),
+        )
+    )
+    background_variation = {
+        name: float(
+            np.asarray(
+                source.fusion.get(
+                    "background_true_class_margin",
+                    source.fusion["rank"]["background_percentile"],
+                ),
+                dtype=np.float64,
+            ).std()
+        )
+        for name, source in selector_inputs.items()
+    }
+    selected_expert = choice["background_expert"]
+    selected_fusion = choice["fusion"]
+    selected_hardness_rows = [
+        row
+        for row in diagnostics["high_score_hardness"]
+        if row["expert"] == selected_expert
+        and (
+            row["fusion"] == selected_fusion
+            if selected_fusion in {"rank", "logistic"}
+            else row["fusion"] == "rank"
+        )
+    ]
+    high_score_triggered = bool(selected_hardness_rows) and all(
+        row["simply_hard_for_every_candidate"]
+        for row in selected_hardness_rows
+    )
+    regret_tolerance = float(
+        thresholds["selector_regret_improvement_tolerance"]
+    )
+    baseline_comparisons = {}
+    for expert in ("exact", "sanitized", "set"):
+        baseline_regret = background_baselines["aggregate"][expert][
+            "mean_oracle_selection_regret"
+        ]
+        comparison = {}
+        for fusion_name in ("rank", "logistic"):
+            key = f"setv.{expert}.{fusion_name}"
+            if key not in aggregate:
+                comparison[fusion_name] = {
+                    "available": False,
+                    "outperforms_background_confidence": False,
+                }
+            else:
+                regret = aggregate[key]["mean_oracle_selection_regret"]
+                comparison[fusion_name] = {
+                    "available": True,
+                    "mean_oracle_selection_regret": regret,
+                    "outperforms_background_confidence": bool(
+                        regret < baseline_regret - regret_tolerance
+                    ),
+                }
+        baseline_comparisons[expert] = {
+            "background_confidence_mean_oracle_selection_regret": baseline_regret,
+            "fusion": comparison,
+            "neither_rank_nor_logistic_outperforms": not any(
+                value["outperforms_background_confidence"]
+                for value in comparison.values()
+            ),
+        }
+    epoch_tolerance = int(
+        thresholds["essentially_identical_epoch_tolerance"]
+    )
+    per_seed_epoch_spread = {}
+    for seed_index, seed in enumerate(seeds):
+        epochs = [
+            value["selected_epochs"][seed_index]
+            for key, value in aggregate.items()
+            if key != "oracle"
+        ]
+        per_seed_epoch_spread[str(seed["seed"])] = {
+            "minimum": int(min(epochs)),
+            "maximum": int(max(epochs)),
+            "spread": int(max(epochs) - min(epochs)),
+            "within_tolerance": bool(max(epochs) - min(epochs) <= epoch_tolerance),
+        }
+    selected_regret = aggregate[choice["selected_configuration"]][
+        "mean_oracle_selection_regret"
+    ]
+    ordinary_regret = aggregate["ordinary"]["mean_oracle_selection_regret"]
+    kill = {
+        "schema_version": 1,
+        "thresholds": thresholds,
+        "object_expert_near_chance": {
+            "triggered": bool(
+                object_balanced_accuracy
+                <= float(
+                    thresholds[
+                        "object_balanced_accuracy_near_chance_ceiling"
+                    ]
+                )
+            ),
+            "balanced_accuracy": object_balanced_accuracy,
+        },
+        "background_margin_negligible_variation": {
+            "triggered_for_selected_expert": bool(
+                background_variation[selected_expert]
+                < float(
+                    thresholds[
+                        "background_margin_standard_deviation_floor"
+                    ]
+                )
+            ),
+            "selected_expert": selected_expert,
+            "standard_deviation_by_expert": background_variation,
+        },
+        "hard_informative_examples_absent": {
+            "triggered_for_selected_expert": not diagnostics["experts"][
+                selected_expert
+            ]["hard_valid"],
+            "hard_valid_by_expert": {
+                name: value["hard_valid"]
+                for name, value in diagnostics["experts"].items()
+            },
+        },
+        "logistic_cross_fitting_degenerate": {
+            "triggered_for_selected_expert": not diagnostics["experts"][
+                selected_expert
+            ]["logistic"].get("available", False),
+            "available_by_expert": {
+                name: value["logistic"].get("available", False)
+                for name, value in diagnostics["experts"].items()
+            },
+        },
+        "high_fusion_score_images_simply_hard_for_every_candidate": {
+            "triggered": high_score_triggered,
+            "selected_configuration": choice["selected_configuration"],
+            "evaluated_fusion": (
+                selected_fusion
+                if selected_fusion in {"rank", "logistic"}
+                else "rank_diagnostic_for_selected_hard_configuration"
+            ),
+            "per_seed": selected_hardness_rows,
+        },
+        "rank_and_logistic_do_not_outperform_background_confidence_alone": {
+            "triggered_for_selected_expert": baseline_comparisons[selected_expert][
+                "neither_rank_nor_logistic_outperforms"
+            ],
+            "selected_expert": selected_expert,
+            "by_expert": baseline_comparisons,
+        },
+        "all_realistic_selectors_choose_essentially_identical_epochs": {
+            "triggered": all(
+                value["within_tolerance"]
+                for value in per_seed_epoch_spread.values()
+            ),
+            "per_seed_epoch_spread": per_seed_epoch_spread,
+        },
+        "setv_fails_to_improve_mean_regret_over_ordinary": {
+            "triggered": bool(
+                selected_regret >= ordinary_regret - regret_tolerance
+            ),
+            "selected_setv_mean_regret": selected_regret,
+            "ordinary_mean_regret": ordinary_regret,
+        },
         "interpretation": (
-            "Flags are reported outcomes, not authorization to redesign the locked method."
+            "Flags are computed diagnostic outcomes, not authorization to "
+            "redesign the locked method."
         ),
     }
     write_json(staging / "analysis_only" / "kill_criteria.json", kill)

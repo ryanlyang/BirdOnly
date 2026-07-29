@@ -108,13 +108,10 @@ The sanitized true-class margins reuse the Phase 2 implementations of:
 Candidate scoring accepts only sample-ID/label-aligned logits from untouched
 validation images.
 
-Launch with four explicit seeds:
+The launcher loads all four frozen seeds from
+`configs/campaign_waterbirds95.yaml`:
 
 ```bash
-export SETV_OBJECT_SEED=...
-export SETV_MASK_SEED=...
-export SETV_SANITIZED_SEED=...
-export SETV_FUSION_SEED=...
 bash scripts/submit_phase3_sanitized.sh
 ```
 
@@ -126,4 +123,3 @@ mask generation + held-out leakage audit
   -> 20-epoch sanitized expert
   -> sanitized hard/rank/logistic fusion and verification
 ```
-

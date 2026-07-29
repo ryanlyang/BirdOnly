@@ -4,6 +4,10 @@ Phase 0 creates one immutable directory. The builder refuses to overwrite an
 existing directory and publishes its output only after all automated checks
 pass.
 
+The production launcher is fail-closed on source provenance: it requires a
+clean Git checkout, exports the submitted commit to Slurm, and the job refuses
+to run if either the commit or worktree state changes before execution.
+
 ## Selector-safe artifacts
 
 The four files under `splits/` contain only:
@@ -43,4 +47,3 @@ receipt is additionally bound to the base-manifest hash and contact-sheet
 hashes. `scripts/verify_phase0.py` checks both layers.
 
 Test metrics and model checkpoints do not exist in Phase 0.
-

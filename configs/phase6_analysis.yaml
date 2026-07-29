@@ -24,21 +24,27 @@ selection:
     - mean_kendall
     - mean_pairwise_ranking_accuracy
 
-# Populate measured leakage/stability fields before a production tie-break when
-# comparable values exist. Null means unavailable and is explicitly recorded.
+# Secondary evidence is derived only from verified expert artifacts. A metric is
+# skipped unless it exists and has the same meaning for every tied expert.
 expert_metadata:
-  exact:
-    leakage_balanced_accuracy: null
-    view_margin_std: null
-    simplicity_rank: 1
-  sanitized:
-    leakage_balanced_accuracy: null
-    view_margin_std: null
-    simplicity_rank: 2
-  set:
-    leakage_balanced_accuracy: null
-    view_margin_std: null
-    simplicity_rank: 3
+  derive_from_verified_artifacts: true
+  leakage_metric: maximum_heldout_mask_balanced_accuracy
+  stability_metric: mean_per_image_view_margin_std
+  missing_metric_policy: skip_unless_comparable_for_all_tied_experts
+  simplicity_rank:
+    exact: 1
+    sanitized: 2
+    set: 3
+
+# Operational definitions for the qualitative Section 22 kill criteria. These
+# flags diagnose a run; they never authorize silent changes to the locked method.
+kill_criteria:
+  object_balanced_accuracy_near_chance_ceiling: 0.55
+  background_margin_standard_deviation_floor: 0.001
+  essentially_identical_epoch_tolerance: 1
+  high_score_quantile: 0.90
+  high_score_accuracy_tolerance: 0.0
+  selector_regret_improvement_tolerance: 0.0
 
 test_policy:
   reporting_only: true

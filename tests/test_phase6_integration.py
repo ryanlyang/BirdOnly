@@ -252,6 +252,36 @@ class Phase6IntegrationTests(unittest.TestCase):
                 (output / "tables" / "primary_results_aggregate.csv").is_file()
             )
             self.assertTrue((output / "plots" / "mean_selection_regret.svg").is_file())
+            self.assertTrue(
+                (
+                    output
+                    / "plots"
+                    / "candidate_disagreement_by_fusion_decile.svg"
+                ).is_file()
+            )
+            self.assertTrue(
+                (output / "plots" / "representative_setv_alpha_curves.svg").is_file()
+            )
+            kill = json.loads(
+                (output / "analysis_only" / "kill_criteria.json").read_text()
+            )
+            self.assertEqual(kill["schema_version"], 1)
+            self.assertIsInstance(
+                kill["object_expert_near_chance"]["triggered"], bool
+            )
+            self.assertIsInstance(
+                kill[
+                    "rank_and_logistic_do_not_outperform_background_confidence_alone"
+                ]["triggered_for_selected_expert"],
+                bool,
+            )
+            self.assertTrue(
+                (
+                    output
+                    / "analysis_only"
+                    / "background_confidence_baselines.json"
+                ).is_file()
+            )
 
 
 if __name__ == "__main__":

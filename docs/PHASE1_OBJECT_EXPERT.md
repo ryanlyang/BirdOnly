@@ -46,10 +46,10 @@ No intermediate expert checkpoints are saved.
 
 ## Submit on Tigris
 
-Choose and record the expert seed explicitly:
+The launcher loads the frozen expert seed from
+`configs/campaign_waterbirds95.yaml`:
 
 ```bash
-export SETV_OBJECT_SEED=...
 bash scripts/submit_phase1_object.sh
 ```
 
@@ -60,4 +60,3 @@ real one-epoch GH200 smoke
   -> afterok
 20-epoch production training and verification
 ```
-

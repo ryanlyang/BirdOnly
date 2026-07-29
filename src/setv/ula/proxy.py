@@ -252,6 +252,121 @@ def _atomic_npz(path: Path, payload: dict[str, np.ndarray]) -> None:
             temporary_path.unlink()
 
 
+def run_ula_proxy_smoke(
+    config: dict[str, Any],
+    report_path: str | Path,
+    *,
+    model_factory: ModelFactory | None = None,
+) -> dict[str, Any]:
+    """Exercise checkpoint loading, frozen encoding, and one proxy update."""
+
+    import torch
+
+    phase0_dir = Path(config["phase0_dir"]).expanduser().resolve()
+    verify_phase0(phase0_dir, require_approval=True)
+    official = audit_official_source(config["official_repo"])
+    ssl_path = Path(config["ssl_checkpoint"]).expanduser().resolve()
+    if not ssl_path.is_file():
+        raise DataValidationError(f"Official SSL checkpoint is missing: {ssl_path}")
+    device_name = config["training"]["device"]
+    if device_name == "cuda" and not torch.cuda.is_available():
+        raise DataValidationError("uLA proxy smoke requires unavailable CUDA")
+    device = torch.device(device_name)
+    seed = int(config["training"]["seed"])
+    seed_python_numpy(seed)
+    seed_torch_if_available(seed)
+    phase0_config = _load_phase0_config(phase0_dir)
+    _, _, train_loader, valid_loader = _loaders(
+        phase0_dir, phase0_config, config
+    )
+    model = (model_factory or create_proxy_model)(config).to(device)
+    trainable_names = [
+        name for name, value in model.named_parameters() if value.requires_grad
+    ]
+    if not trainable_names or any(
+        not name.startswith("head.") for name in trainable_names
+    ):
+        raise DataValidationError(
+            f"uLA smoke found unexpected trainable parameters: {trainable_names}"
+        )
+    batch = next(iter(train_loader))
+    images = batch["image"].to(device)
+    targets = batch["target"].to(device)
+    optimizer = torch.optim.SGD(
+        [value for value in model.parameters() if value.requires_grad],
+        lr=float(config["training"]["learning_rate"]),
+        momentum=float(config["training"]["momentum"]),
+        weight_decay=float(config["training"]["weight_decay"]),
+    )
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+    logits = model(images)
+    loss = torch.nn.functional.cross_entropy(logits, targets)
+    loss.backward()
+    optimizer.step()
+    model.eval()
+    validation = next(iter(valid_loader))
+    with torch.inference_mode():
+        validation_logits = model(validation["image"].to(device))
+    if validation_logits.shape != (len(validation["target"]), 2):
+        raise DataValidationError("uLA smoke produced invalid validation logits")
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    report = {
+        "schema_version": 1,
+        "status": "accepted",
+        "accepted": True,
+        "kind": "setv_ula_proxy_checkpoint_smoke",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "phase0_dir": str(phase0_dir),
+        "phase0_artifact_manifest_sha256": sha256_file(
+            phase0_dir / BASE_ARTIFACT_MANIFEST
+        ),
+        "official_source": official,
+        "ssl_checkpoint": {
+            "path": str(ssl_path),
+            "sha256": sha256_file(ssl_path),
+        },
+        "seed": seed,
+        "device": {
+            "type": device.type,
+            "name": (
+                torch.cuda.get_device_name(0)
+                if device.type == "cuda"
+                else None
+            ),
+            "capability": (
+                list(torch.cuda.get_device_capability(0))
+                if device.type == "cuda"
+                else None
+            ),
+        },
+        "software": {
+            "torch": torch.__version__,
+            "torchvision": __import__("torchvision").__version__,
+        },
+        "train_batch": {
+            "sample_count": int(targets.numel()),
+            "loss": float(loss.detach().cpu()),
+            "trainable_parameters": trainable_names,
+            "encoder_frozen": True,
+        },
+        "validation_batch": {
+            "sample_count": int(len(validation["target"])),
+            "logits_shape": list(validation_logits.shape),
+        },
+        "information_boundary": {
+            "candidate_train_used": True,
+            "biased_val_used": True,
+            "oracle_used": False,
+            "test_used": False,
+            "protected_group_labels_used": False,
+        },
+    }
+    write_json(Path(report_path).expanduser().resolve(), report)
+    return report
+
+
 def train_ula_proxy(
     config: dict[str, Any], *, model_factory: ModelFactory | None = None
 ) -> Path:

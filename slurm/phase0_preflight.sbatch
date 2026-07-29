@@ -11,6 +11,7 @@
 set -Eeuo pipefail
 
 : "${SETV_REPO:?submit_phase0.sh must export SETV_REPO}"
+: "${SETV_EXPECTED_COMMIT:?submit_phase0.sh must export SETV_EXPECTED_COMMIT}"
 
 ENV=/home/ryreu/miniforge3-aarch64/envs/fcv_gh200
 CONFIG="${SETV_REPO}/configs/data_waterbirds95.yaml"
@@ -23,11 +24,26 @@ source /home/ryreu/miniforge3-aarch64/etc/profile.d/conda.sh
 conda activate "$ENV"
 cd "$SETV_REPO"
 
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Phase 0 runtime provenance failure: repository is not a Git checkout" >&2
+  exit 2
+fi
+actual_commit=$(git rev-parse HEAD)
+if [[ "$actual_commit" != "$SETV_EXPECTED_COMMIT" ]]; then
+  echo "Phase 0 runtime provenance failure: submitted commit changed" >&2
+  echo "expected=$SETV_EXPECTED_COMMIT actual=$actual_commit" >&2
+  exit 2
+fi
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  echo "Phase 0 runtime provenance failure: worktree became dirty" >&2
+  git status --short >&2
+  exit 2
+fi
+
 echo "[$(date --iso-8601=seconds)] host=$(hostname) job=${SLURM_JOB_ID}"
 echo "repo=$SETV_REPO"
-echo "commit=$(git rev-parse HEAD 2>/dev/null || printf UNKNOWN)"
+echo "commit=$actual_commit"
 echo "architecture=$(uname -m)"
-git status --short 2>/dev/null || true
 python --version
 python -c "import numpy, pandas, PIL, yaml; print('numpy', numpy.__version__, 'pandas', pandas.__version__, 'Pillow', PIL.__version__, 'PyYAML', yaml.__version__)"
 df -h /home/ryreu

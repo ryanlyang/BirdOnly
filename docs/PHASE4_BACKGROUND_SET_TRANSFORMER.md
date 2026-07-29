@@ -98,12 +98,10 @@ There is no calibration holdout and no temperature scaling.
 
 ## Running on Tigris
 
-Freeze all three seeds explicitly:
+The launcher loads all three frozen seeds from
+`configs/campaign_waterbirds95.yaml`:
 
 ```bash
-export SETV_OBJECT_SEED=...
-export SETV_SET_SEED=...
-export SETV_FUSION_SEED=...
 bash scripts/submit_phase4_set.sh
 ```
 

@@ -2,7 +2,7 @@ schema_version: 1
 phase: ula_proxy
 
 phase0_dir: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/phase0
-official_repo: /home/ryreu/SETV/uLA
+official_repo: /home/ryreu/guided_cnn/BirdOnly/uLA
 ssl_checkpoint: null
 output_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95/ula_proxy
 

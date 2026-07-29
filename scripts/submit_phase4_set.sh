@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-for name in SETV_OBJECT_SEED SETV_SET_SEED SETV_FUSION_SEED; do
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/load_campaign_env.sh"
+
+for name in SETV_OBJECT_SEED SETV_SET_SEED SETV_SET_FUSION_SEED; do
   if [[ -z "${!name:-}" || ! "${!name}" =~ ^[0-9]+$ ]]; then
     echo "$name must be an explicitly frozen nonnegative integer" >&2
     exit 2
   fi
 done
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SETV_REPO=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-ROOT=/home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
+ROOT=$SETV_CAMPAIGN_ROOT
 PHASE0="${ROOT}/phase0"
 OBJECT="${ROOT}/object_expert/seed_${SETV_OBJECT_SEED}"
 SET_EXPERT="${ROOT}/background_set/seed_${SETV_SET_SEED}"
-FUSION="${ROOT}/fusion_set/object_${SETV_OBJECT_SEED}_set_${SETV_SET_SEED}_fusion_${SETV_FUSION_SEED}"
+FUSION="${ROOT}/fusion_set/object_${SETV_OBJECT_SEED}_set_${SETV_SET_SEED}_fusion_${SETV_SET_FUSION_SEED}"
 mkdir -p "${ROOT}/run_logs" "${ROOT}/preflight" "${ROOT}/submission_receipts" \
   "${ROOT}/background_set" "${ROOT}/fusion_set"
 
@@ -44,7 +46,11 @@ if [[ -n "$(squeue -h -u "$USER" -n setv_set_smoke,setv_set_train,setv_set_fusio
   exit 2
 fi
 
-export SETV_REPO SETV_OBJECT_SEED SETV_SET_SEED SETV_FUSION_SEED
+preflight_report="${ROOT}/preflight/phase4_submission_$(date -u +%Y%m%dT%H%M%SZ)_${BASHPID}.json"
+bash "${SCRIPT_DIR}/run_submission_preflight.sh" phase4 "$preflight_report"
+preflight_sha=$(sha256sum "$preflight_report" | awk '{print $1}')
+
+export SETV_REPO SETV_OBJECT_SEED SETV_SET_SEED SETV_SET_FUSION_SEED
 smoke_raw=$(sbatch --parsable --export=ALL "${SETV_REPO}/slurm/phase4_set_smoke.sbatch")
 smoke_id=${smoke_raw%%;*}
 train_raw=$(sbatch --parsable --dependency="afterok:${smoke_id}" --export=ALL \
@@ -60,12 +66,15 @@ receipt="${ROOT}/submission_receipts/phase4_set_${fusion_id}.txt"
   echo "submitted_at=$(date --iso-8601=seconds)"
   echo "object_seed=$SETV_OBJECT_SEED"
   echo "set_seed=$SETV_SET_SEED"
-  echo "fusion_seed=$SETV_FUSION_SEED"
+  echo "fusion_seed=$SETV_SET_FUSION_SEED"
   echo "smoke_job_id=$smoke_id"
   echo "train_job_id=$train_id"
   echo "fusion_job_id=$fusion_id"
   echo "dependencies=${smoke_id}->${train_id}->${fusion_id}"
   echo "commit=$commit"
+  echo "campaign_manifest=$SETV_CAMPAIGN_CONFIG"
+  echo "preflight_report=$preflight_report"
+  echo "preflight_sha256=$preflight_sha"
   echo "phase0_manifest_sha256=$(sha256sum "${PHASE0}/artifact_manifest.json" | awk '{print $1}')"
   echo "object_scores_sha256=$(sha256sum "${OBJECT}/scores/object_val_scores.npz" | awk '{print $1}')"
   echo "expert_config_sha256=$(sha256sum "${SETV_REPO}/configs/expert_background_set.yaml" | awk '{print $1}')"

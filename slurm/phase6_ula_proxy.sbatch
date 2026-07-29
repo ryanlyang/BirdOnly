@@ -11,6 +11,7 @@
 
 set -Eeuo pipefail
 : "${SETV_REPO:?missing SETV_REPO}"
+: "${SETV_EXPECTED_COMMIT:?missing SETV_EXPECTED_COMMIT}"
 : "${SETV_ULA_REPO:?missing SETV_ULA_REPO}"
 : "${SETV_ULA_SEED:?missing SETV_ULA_SEED}"
 : "${SETV_ULA_SSL_CHECKPOINT:?missing SETV_ULA_SSL_CHECKPOINT}"
@@ -22,6 +23,12 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 source /home/ryreu/miniforge3-aarch64/etc/profile.d/conda.sh
 conda activate "$ENV"
 cd "$SETV_REPO"
+actual_commit=$(git rev-parse HEAD)
+if [[ "$actual_commit" != "$SETV_EXPECTED_COMMIT" ]] || \
+   [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  echo "uLA proxy refuses changed source after its smoke gate" >&2
+  exit 2
+fi
 python -u scripts/train_ula_proxy.py \
   --config configs/ula_proxy_waterbirds95.yaml \
   --seed "$SETV_ULA_SEED" \

@@ -2,9 +2,8 @@ schema_version: 1
 account: reu-aisocial
 partition: tigris
 environment: /home/ryreu/miniforge3-aarch64/envs/fcv_gh200
-repository: /home/ryreu/guided_cnn/waterbirds/Waterbird_Runs/SETV
+repository: /home/ryreu/guided_cnn/BirdOnly
 python: /home/ryreu/miniforge3-aarch64/envs/fcv_gh200/bin/python
 logs_root: /home/ryreu/guided_cnn/logsWaterbird/setv_waterbirds95
 hf_home: /home/ryreu/.cache/huggingface
 torch_home: /home/ryreu/.cache/torch
-
