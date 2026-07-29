@@ -111,6 +111,11 @@ padding ineligible. Every train and validation image is audited before model
 construction. See
 `docs/PHASE4_BACKGROUND_SET_TRANSFORMER.md`.
 
+When the locked floor is infeasible on real masks, the read-only
+`scripts/submit_phase4_capacity_audit.sh` launcher measures the complete
+canonical/full-frame capacity distribution without training or reading
+Oracle/test data.
+
 ## Phase 5
 
 Phase 5 trains 50-epoch ERM ViT-S/16 candidate trajectories and records the

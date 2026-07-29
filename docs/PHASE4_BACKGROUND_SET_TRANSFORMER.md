@@ -38,6 +38,31 @@ The deterministic maximum-token cap and fixed-count dropout are implementation
 choices used to make a run exactly reproducible. Their seeds and resolved
 settings are persisted.
 
+## Capacity census
+
+If the locked 16-token floor rejects a real image even after the full-frame
+fallback, do not repeatedly alter transforms or relax foreground eligibility.
+Run the read-only capacity census:
+
+```bash
+bash scripts/submit_phase4_capacity_audit.sh
+```
+
+The census loads only `candidate_train` and `biased_val`; it never loads
+protected group columns, Oracle validation, or test data. For every sample it
+records the eligible-token count under:
+
+- the canonical evaluation center crop;
+- the full-frame aspect-preserving transform with ineligible padding;
+- the better of those two fixed views.
+
+The JSON report contains split and combined distributions, support counts for
+every floor from 1 through 16, the largest universally supported floor, and
+all sample IDs that fail the configured floor. The companion CSV contains one
+row per image. Minimum enforcement is bypassed only to measure capacity; the
+census never trains a model, creates a Stage 4 artifact, changes the
+configuration, or authorizes a new floor.
+
 Each retained token receives its pretrained visual patch embedding plus one
 learned 3-by-3 coarse spatial-bin embedding. Exact patch coordinates and the
 pretrained dense positional embedding are never supplied.

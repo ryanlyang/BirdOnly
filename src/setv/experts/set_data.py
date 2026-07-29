@@ -31,16 +31,13 @@ class InsufficientBackgroundTokensError(DataValidationError):
         )
 
 
-def select_background_patch_tokens(
+def background_patch_capacity(
     mask,
     config: dict[str, Any],
-    *,
-    selection_seed: int,
-    dropout_seed: int,
-    apply_dropout: bool,
-) -> tuple[np.ndarray, dict[str, int]]:
+) -> dict[str, Any]:
+    """Measure eligible patches without applying a cardinality floor or cap."""
+
     input_config = config["input"]
-    training = config["training"]
     patch_size = int(input_config["patch_size"])
     width, height = mask.size
     if width != height or width % patch_size != 0:
@@ -66,10 +63,31 @@ def select_background_patch_tokens(
     foreground_fraction = dilated.reshape(
         grid, patch_size, grid, patch_size
     ).mean(axis=(1, 3))
-    valid = np.flatnonzero(
+    eligible = np.flatnonzero(
         foreground_fraction.reshape(-1)
         <= float(input_config["maximum_foreground_fraction"])
     )
+    return {
+        "eligible_indices": eligible,
+        "eligible_count": int(len(eligible)),
+        "total_patch_count": int(grid * grid),
+        "grid_size": int(grid),
+        "dilation_radius": dilation_radius,
+    }
+
+
+def select_background_patch_tokens(
+    mask,
+    config: dict[str, Any],
+    *,
+    selection_seed: int,
+    dropout_seed: int,
+    apply_dropout: bool,
+) -> tuple[np.ndarray, dict[str, int]]:
+    input_config = config["input"]
+    training = config["training"]
+    capacity = background_patch_capacity(mask, config)
+    valid = capacity["eligible_indices"]
     minimum = int(input_config["min_background_tokens"])
     if len(valid) < minimum:
         raise InsufficientBackgroundTokensError(len(valid), minimum)
@@ -86,18 +104,13 @@ def select_background_patch_tokens(
         retained = min(before_dropout, retained)
         generator = np.random.default_rng(dropout_seed)
         valid = np.sort(generator.choice(valid, size=retained, replace=False))
-    token_mask = np.zeros(grid * grid, dtype=bool)
+    token_mask = np.zeros(capacity["total_patch_count"], dtype=bool)
     token_mask[valid] = True
     return token_mask, {
-        "valid_before_cap": int(
-            (
-                foreground_fraction.reshape(-1)
-                <= float(input_config["maximum_foreground_fraction"])
-            ).sum()
-        ),
+        "valid_before_cap": capacity["eligible_count"],
         "valid_after_cap": before_dropout,
         "retained_after_dropout": int(token_mask.sum()),
-        "dilation_radius": dilation_radius,
+        "dilation_radius": capacity["dilation_radius"],
     }
 
 

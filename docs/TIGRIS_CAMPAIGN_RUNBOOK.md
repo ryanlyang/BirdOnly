@@ -286,6 +286,11 @@ Special cases:
   16-token minimum remain unchanged. This fallback also applies when the
   canonical validation crop is intrinsically below the floor. Retry from a
   clean commit and retain all submission receipts.
+- Phase 4 full-frame capacity remains below 16: stop production submission
+  and run `bash scripts/submit_phase4_capacity_audit.sh`. Review the resulting
+  `preflight/set_capacity_job<job>.json` and companion sample CSV before
+  changing the floor. The census is diagnostic-only and does not constitute
+  approval to alter the scientific contract.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified
