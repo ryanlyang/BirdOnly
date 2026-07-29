@@ -13,6 +13,11 @@ loads that manifest and writes a fail-closed preflight receipt before calling
 Slurm. Follow `docs/TIGRIS_CAMPAIGN_RUNBOOK.md` for the complete staged launch,
 monitoring, test-isolation, and recovery procedure.
 
+All `vit_small_patch16_224` experts and candidates use the normalization
+declared by the selected timm pretrained weights: mean `[0.5, 0.5, 0.5]` and
+standard deviation `[0.5, 0.5, 0.5]`. Runtime preparation verifies this against
+the model's `pretrained_cfg`.
+
 ## Phase 0
 
 Phase 0 provides:

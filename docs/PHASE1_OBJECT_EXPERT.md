@@ -3,6 +3,11 @@
 Phase 1 trains the ImageNet-pretrained `vit_small_patch16_224` object expert
 on the complete approved `candidate_train` split.
 
+The selected timm weights declare mean `[0.5, 0.5, 0.5]` and standard
+deviation `[0.5, 0.5, 0.5]`. Phase 1 uses those values and verifies them
+against `model.pretrained_cfg` before the first optimization step. The same
+contract is shared by all SETV ViT-S/16 experts and candidates.
+
 For every jointly transformed image-mask pair, the visible bird stays in its
 original position and at its original scale. All non-bird pixels are replaced
 in raw RGB space with `(0, 255, 0)`. Normalization happens afterward.

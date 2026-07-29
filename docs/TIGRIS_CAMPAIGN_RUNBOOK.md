@@ -268,6 +268,12 @@ Special cases:
 - Phase 0 mask-mapping audit failed before publication: retain the audit
   report. If the target `phase0/` directory is absent, a corrected clean
   commit may retry the same campaign; record both submission receipts.
+- Pretrained-metadata contract failure before the first training step: retain
+  the failed smoke log and submission receipt. If the architecture and
+  pretrained weights are unchanged and no stage artifact was published,
+  correcting the configuration to the weights' declared preprocessing is an
+  implementation repair and may retry the same stage from a clean commit. The
+  new submission receipt must record the corrected config hash.
 - Sanitized leakage rejection: retain the rejected bank and stop Phase 3.
 - Failed official uLA/GH200 compatibility: retain the smoke receipt; either
   repair the explicit legacy environment or explicitly switch to a verified

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from setv.errors import ConfigurationError
+from setv.model_contracts import vit_small_normalization_matches
 
 
 def load_candidate_config(
@@ -107,10 +108,10 @@ def validate_candidate_config(config: dict[str, Any]) -> None:
         raise ConfigurationError("evaluation_batch_size must be positive")
     if int(config["training"]["num_workers"]) < 0:
         raise ConfigurationError("num_workers cannot be negative")
-    if config["model"]["normalization_mean"] != [0.485, 0.456, 0.406]:
-        raise ConfigurationError("Locked ImageNet normalization mean changed")
-    if config["model"]["normalization_std"] != [0.229, 0.224, 0.225]:
-        raise ConfigurationError("Locked ImageNet normalization std changed")
+    if not vit_small_normalization_matches(config["model"]):
+        raise ConfigurationError(
+            "Normalization must match the selected timm ViT-S/16 pretrained metadata"
+        )
 
 
 def resolved_candidate_config(config: dict[str, Any]) -> dict[str, Any]:
