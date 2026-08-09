@@ -63,7 +63,7 @@ Configuration Snapshot; and the mask entries under Remaining
 Environment-Specific Preflight Items. Non-conflicting requirements remain
 binding.
 
-This incompatible correction is versioned as AnchorCal package `0.6.1`,
+This incompatible correction is versioned as AnchorCal package `0.6.2`,
 resolved configuration schema `anchorcal-config-v4`, VLM-mask manifest schema
 `anchorcal-vlm-mask-manifest-v3`, and split manifest schema
 `anchorcal-splits-v4`. Older schema artifacts cannot satisfy this campaign.
@@ -2626,7 +2626,11 @@ GradScaler = disabled
 master parameters = float32
 ```
 
-Saliency gradients may fall back to float32 if parity tests show instability.
+Ordinary training and inference use BF16 autocast. Post-logit centering,
+margin normalization, and lambda mixing use FP32. Live GH200 parity evidence
+activated the prespecified fallback for saliency forwards and gradients, which
+therefore run in FP32 with autocast disabled. The direct and cached paths retain
+their original strict parity tolerances.
 
 ### Data loading
 

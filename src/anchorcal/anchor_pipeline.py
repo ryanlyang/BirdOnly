@@ -671,8 +671,32 @@ def _branch_extremes_and_saliency(
     image = sample["image"].unsqueeze(0).to(device)
     mask = sample["mask"].unsqueeze(0).to(device)
     label = torch.tensor([labels], dtype=torch.long, device=device)
+
+    # Classification and intervention provenance retain the locked BF16
+    # inference policy. Saliency is recomputed below in the prespecified FP32
+    # fallback so linear endpoint caching can satisfy strict parity.
+    with evaluation_inference(device):
+        foreground_eval_output = foreground(foreground_image, mask)
+        eval_projected = background.project(image)
+        background_eval_outputs = [
+            background.forward_from_projected(
+                eval_projected,
+                torch.from_numpy(views[view].astype(np.int64))
+                .unsqueeze(0)
+                .to(device),
+            )
+            for view in range(len(views))
+        ]
+        background_eval_logits = torch.stack(
+            [output.logits for output in background_eval_outputs]
+        ).mean(dim=0)
+
     with saliency_evaluation(device):
-        foreground_output = foreground(foreground_image, mask, activation_leaf=True)
+        foreground_output = foreground(
+            foreground_image,
+            mask,
+            activation_leaf=True,
+        )
         foreground_score = (
             centered_logits(foreground_output.logits)
             / (foreground_scale + MARGIN_SCALE_EPSILON)
@@ -716,18 +740,37 @@ def _branch_extremes_and_saliency(
         background_source = torch.cat(
             [output.source_indices.flatten() for output in background_outputs]
         )
+    if (
+        not torch.equal(
+            foreground_eval_output.patch_valid,
+            foreground_output.patch_valid,
+        )
+        or not torch.equal(
+            foreground_eval_output.source_indices,
+            foreground_output.source_indices,
+        )
+    ):
+        raise AuditFailure(
+            "BF16 inference and FP32 saliency produced different foreground metadata"
+        )
     return {
         "foreground_input_image": foreground_image.detach().float().cpu().numpy(),
         "foreground_input_mask": mask.detach().cpu().numpy(),
-        "foreground_logits": foreground_output.logits.detach().float().cpu().numpy()[0],
+        "foreground_logits": (
+            foreground_eval_output.logits.detach().float().cpu().numpy()[0]
+        ),
         "foreground_patch_activations": (
-            foreground_output.patch_activations.detach().float().cpu().numpy()
+            foreground_eval_output.patch_activations.detach().float().cpu().numpy()
         ),
-        "foreground_patch_valid": foreground_output.patch_valid.detach().cpu().numpy(),
+        "foreground_patch_valid": (
+            foreground_eval_output.patch_valid.detach().cpu().numpy()
+        ),
         "foreground_source_indices": (
-            foreground_output.source_indices.detach().cpu().numpy()
+            foreground_eval_output.source_indices.detach().cpu().numpy()
         ),
-        "background_logits": background_logits.detach().float().cpu().numpy()[0],
+        "background_logits": (
+            background_eval_logits.detach().float().cpu().numpy()[0]
+        ),
         "foreground_signed": foreground_signed.detach().float().cpu().numpy(),
         "foreground_source": foreground_source.detach().cpu().numpy(),
         "background_signed": background_signed.detach().float().cpu().numpy(),
@@ -794,6 +837,37 @@ def _direct_lambda_saliency(
     import torch
 
     label = torch.tensor([label_value], dtype=torch.long, device=device)
+
+    # The direct logit comparison uses the same BF16 branch forwards as the
+    # cached classification path, followed by the shared FP32 mixing rule.
+    with evaluation_inference(device):
+        foreground_eval_output = foreground(
+            sample["foreground_image"].unsqueeze(0).to(device),
+            sample["mask"].unsqueeze(0).to(device),
+        )
+        eval_projected = background.project(
+            sample["image"].unsqueeze(0).to(device)
+        )
+        background_eval_outputs = [
+            background.forward_from_projected(
+                eval_projected,
+                torch.from_numpy(views[view].astype(np.int64))
+                .unsqueeze(0)
+                .to(device),
+            )
+            for view in range(len(views))
+        ]
+        background_eval_logits = torch.stack(
+            [output.logits for output in background_eval_outputs]
+        ).mean(dim=0)
+        eval_logits = mix_anchor_logits(
+            foreground_eval_output.logits,
+            background_eval_logits,
+            reliance_lambda,
+            foreground_scale,
+            background_scale,
+        )
+
     with saliency_evaluation(device):
         foreground_output = foreground(
             sample["foreground_image"].unsqueeze(0).to(device),
@@ -837,7 +911,7 @@ def _direct_lambda_saliency(
             ]
         )
     return {
-        "logits": logits.detach().float().cpu().numpy()[0],
+        "logits": eval_logits.detach().float().cpu().numpy()[0],
         "foreground_signed": foreground_signed.detach().float().cpu().numpy(),
         "foreground_source": foreground_output.source_indices[
             0, foreground_valid

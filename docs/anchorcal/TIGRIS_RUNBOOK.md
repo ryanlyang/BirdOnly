@@ -7,12 +7,18 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.6.1` and resolved configuration
+The corrected campaign requires AnchorCal `0.6.2` and resolved configuration
 schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
 single preflight job is allowed to populate the pinned Hugging Face model
 cache. Every later job is forced into Hugging Face offline mode.
+
+Ordinary training and inference use the locked GH200 BF16 autocast policy.
+Post-logit centering, margin normalization, and lambda mixing use FP32, and
+saliency forwards/gradients use the activated FP32 fallback with autocast
+disabled. Direct-versus-cached parity retains its strict `1e-6` logit/criterion
+and `1e-5` saliency limits.
 
 ## 1. One-time checkout and path preparation
 

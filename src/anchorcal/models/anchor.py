@@ -42,6 +42,11 @@ def mix_anchor_logits(
     foreground_scale: float,
     background_scale: float,
 ) -> torch.Tensor:
+    # Branch forwards may be BF16, but the locked algebraic cache stores their
+    # exported values as FP32. Perform post-logit normalization and mixing in
+    # FP32 so the direct and cached definitions are numerically identical.
+    foreground_logits = foreground_logits.float()
+    background_logits = background_logits.float()
     lam = torch.as_tensor(
         reliance_lambda, dtype=foreground_logits.dtype, device=foreground_logits.device
     )

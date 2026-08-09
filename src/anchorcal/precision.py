@@ -1,9 +1,9 @@
 """Locked mixed-precision contexts for model evaluation.
 
-AnchorCal evaluates every CUDA/GH200 model forward under bfloat16 autocast.
-Keeping the policy here prevents individual evaluation paths from silently
-drifting to fp32.  Saliency needs gradients, but uses the same autocast policy
-as all other evaluations.
+AnchorCal evaluates ordinary CUDA/GH200 model forwards under bfloat16
+autocast. Saliency is the prespecified FP32 fallback: it retains gradients but
+disables autocast so the direct and algebraically cached anchor paths can meet
+their locked parity tolerances.
 """
 
 from __future__ import annotations
@@ -42,9 +42,12 @@ def evaluation_inference(device) -> Iterator[None]:
 
 @contextmanager
 def saliency_evaluation(device) -> Iterator[None]:
-    """Run a gradient-based saliency forward under the same bf16 policy."""
+    """Run gradient-based saliency in the locked FP32 fallback mode."""
 
     import torch
 
-    with torch.enable_grad(), evaluation_autocast(device):
+    with torch.enable_grad(), torch.autocast(
+        device_type=device.type,
+        enabled=False,
+    ):
         yield

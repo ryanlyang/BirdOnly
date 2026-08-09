@@ -575,6 +575,29 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                 rtol=0,
             )
 
+    def test_bfloat16_branch_logits_are_mixed_in_fp32_for_cache_parity(self) -> None:
+        foreground = torch.tensor([[1.25, -0.75]], dtype=torch.bfloat16)
+        background = torch.tensor([[-0.5, 1.75]], dtype=torch.bfloat16)
+        cache = ExtremeCache(
+            foreground.float().numpy(),
+            background.float().numpy(),
+        )
+        for reliance_lambda in (0.0, 0.25, 0.5, 0.75, 1.0):
+            direct = mix_anchor_logits(
+                foreground,
+                background,
+                reliance_lambda,
+                1.7,
+                2.3,
+            )
+            self.assertEqual(direct.dtype, torch.float32)
+            np.testing.assert_allclose(
+                cached_logits(cache, reliance_lambda, 1.7, 2.3),
+                direct.numpy(),
+                atol=1.0e-6,
+                rtol=0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

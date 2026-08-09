@@ -2799,7 +2799,7 @@ The core pilot is not supported if:
 
 # 28. Locked Default Configuration
 
-The corrected implementation package is version `0.6.1`, and this configuration
+The corrected implementation package is version `0.6.2`, and this configuration
 uses schema `anchorcal-config-v4`.
 
 ```yaml

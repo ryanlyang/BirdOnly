@@ -140,6 +140,26 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   retained SETV tests** (**289 total**), including a direct BF16-to-NumPy
   regression. Python compilation, every AnchorCal shell/Slurm syntax check,
   and `git diff --check` also passed.
+- On 2026-08-09, the repaired campaign at commit `5dcdc2f` passed preflight and
+  debug job `70613` passed the complete branch-audit stage, confirming the
+  BF16 export repair. The next fail-closed gate exposed a distinct numerical
+  mismatch: direct anchor mixing was performed on BF16 logits while the
+  algebraic cache mixed their exported FP32 values. The maximum logit
+  discrepancy was `0.0008223652839660645`, correctly exceeding the locked
+  `1e-6` parity threshold.
+- AnchorCal `0.6.2` preserves ordinary BF16 training/inference, performs
+  post-logit centering, margin normalization, and lambda mixing in FP32, and
+  activates the already-prespecified FP32 fallback for saliency
+  forwards/gradients. Endpoint-cache saliency and direct saliency now share
+  that FP32 path; classification/intervention provenance still comes from
+  independent BF16 inference. The original `1e-6` logit/criterion and `1e-5`
+  saliency parity limits remain unchanged. The scientific config remains
+  `anchorcal-config-v4`.
+- The completed `0.6.2` precision repair passed **210 AnchorCal tests** and all
+  **81 retained SETV tests** (**291 total**), including explicit BF16-logit
+  FP32-mixing cache parity and FP32-saliency-context regressions. Python
+  compilation, every AnchorCal shell/Slurm syntax check, and
+  `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

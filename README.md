@@ -1,7 +1,7 @@
 # AnchorCal Waterbirds100 pilot
 
 The active research implementation is the independent `anchorcal` package.
-The corrected Waterbirds100 contract is AnchorCal version `0.6.1` with resolved
+The corrected Waterbirds100 contract is AnchorCal version `0.6.2` with resolved
 configuration schema `anchorcal-config-v4`.
 It builds controlled foreground-reliance anchors, uses them to select one of
 four practical validation criteria, and evaluates that frozen choice on a
@@ -9,6 +9,10 @@ six-run ordinary ViT candidate grid. The binding documents are
 `AnchorCal_Waterbirds100_Pilot_Implementation_Plan.md` and
 `AnchorCal_Implementation_Decision_Locks_Answers.md`; later locks take
 precedence.
+
+Ordinary model forwards use BF16 on GH200; post-logit AnchorCal mixing and the
+activated saliency-parity fallback use FP32 while retaining the locked strict
+direct-versus-cached tolerances.
 
 Copy `configs/anchorcal/paths.local.example.yaml` to the ignored
 `configs/anchorcal/paths.local.yaml` and verify every frozen dataset, mask,

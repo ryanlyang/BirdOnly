@@ -48,6 +48,13 @@ class EvaluationPrecisionPolicyTests(unittest.TestCase):
                 result = value.square()
         self.assertEqual(float(torch.autograd.grad(result, value)[0]), 4.0)
 
+    def test_saliency_uses_the_locked_fp32_fallback(self) -> None:
+        context = unittest.mock.MagicMock()
+        with patch("torch.autocast", return_value=context) as autocast:
+            with saliency_evaluation(SimpleNamespace(type="cuda")):
+                pass
+        autocast.assert_called_once_with(device_type="cuda", enabled=False)
+
     def test_bfloat16_evaluation_outputs_cross_numpy_boundary_as_fp32(self) -> None:
         value = torch.tensor([1.0, -2.0], dtype=torch.bfloat16)
         exported = floating_tensor_to_numpy(value)
