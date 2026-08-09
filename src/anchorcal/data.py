@@ -1,14 +1,11 @@
-"""Waterbirds metadata and source-resolution image/mask access."""
+"""Waterbirds metadata validation and contained source-image access."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
-from PIL import Image
 
 from .errors import PreflightError
 
@@ -18,6 +15,7 @@ REQUIRED_COLUMNS = ("img_id", "img_filename", "y", "place", "split")
 
 def load_metadata(path: str | Path) -> pd.DataFrame:
     frame = pd.read_csv(path)
+    frame["metadata_row_index"] = np.arange(len(frame), dtype=np.int64)
     missing = [name for name in REQUIRED_COLUMNS if name not in frame.columns]
     if missing:
         raise PreflightError(f"metadata is missing required columns: {missing}")
@@ -58,8 +56,14 @@ def load_metadata(path: str | Path) -> pd.DataFrame:
         raise PreflightError("metadata img_filename must be nonempty")
     unsafe_filenames = []
     for value in frame["img_filename"].tolist():
-        relative = Path(value)
-        if relative.is_absolute() or ".." in relative.parts:
+        normalized = str(value).strip().replace("\\", "/")
+        relative = Path(normalized)
+        windows_absolute = (
+            len(normalized) >= 3
+            and normalized[0].isalpha()
+            and normalized[1:3] == ":/"
+        )
+        if relative.is_absolute() or windows_absolute or ".." in relative.parts:
             unsafe_filenames.append(value)
     if unsafe_filenames:
         raise PreflightError(
@@ -70,85 +74,28 @@ def load_metadata(path: str | Path) -> pd.DataFrame:
 
 
 def image_path(root: str | Path, image_filename: str) -> Path:
-    return Path(root) / image_filename
-
-
-def mask_relative_path(image_filename: str) -> Path:
-    return Path(image_filename).with_suffix(".png")
-
-
-def mask_path(root: str | Path, image_filename: str) -> Path:
-    return Path(root) / mask_relative_path(image_filename)
-
-
-@dataclass(frozen=True)
-class WaterbirdsRecord:
-    img_id: int
-    img_filename: str
-    y: int
-    place: int
-    split: int
-
-
-class WaterbirdsDataset:
-    """Dataset returning raw PIL image/mask and immutable metadata.
-
-    A transform must explicitly accept both image and mask.  There is no
-    candidate-training convenience path that could accidentally feed masks to a
-    model.
-    """
-
-    def __init__(
-        self,
-        frame: pd.DataFrame,
-        image_root: str | Path,
-        mask_root: str | Path,
-        transform: Any | None = None,
-    ) -> None:
-        self.frame = frame.sort_values("img_id", kind="stable").reset_index(drop=True)
-        self.image_root = Path(image_root)
-        self.mask_root = Path(mask_root)
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.frame)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        row = self.frame.iloc[index]
-        image_file = image_path(self.image_root, str(row.img_filename))
-        mask_file = mask_path(self.mask_root, str(row.img_filename))
-        with Image.open(image_file) as opened:
-            image = opened.convert("RGB")
-        with Image.open(mask_file) as opened:
-            mask = opened.copy()
-        sample: dict[str, Any] = {
-            "image": image,
-            "mask": mask,
-            "img_id": int(row.img_id),
-            "y": int(row.y),
-            "place": int(row.place),
-            "split": int(row.split),
-            "img_filename": str(row.img_filename),
-        }
-        if self.transform is not None:
-            transformed = self.transform(
-                image=image,
-                mask=mask,
-                img_id=sample["img_id"],
-            )
-            sample.update(transformed)
-        return sample
-
-
-class CandidateTrainView:
-    """Erase masks from the training-model API while retaining joint geometry."""
-
-    def __init__(self, dataset: WaterbirdsDataset) -> None:
-        self.dataset = dataset
-
-    def __len__(self) -> int:
-        return len(self.dataset)
-
-    def __getitem__(self, index: int) -> tuple[Any, int, int]:
-        sample = self.dataset[index]
-        return sample["image"], sample["y"], sample["img_id"]
+    resolved_root = Path(root).expanduser().resolve()
+    normalized = str(image_filename).strip().replace("\\", "/")
+    relative = Path(normalized)
+    windows_absolute = (
+        len(normalized) >= 3
+        and normalized[0].isalpha()
+        and normalized[1:3] == ":/"
+    )
+    if (
+        not normalized
+        or relative.is_absolute()
+        or windows_absolute
+        or ".." in relative.parts
+    ):
+        raise PreflightError(
+            f"unsafe Waterbirds img_filename: {image_filename!r}"
+        )
+    candidate = (resolved_root / relative).resolve(strict=False)
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as error:
+        raise PreflightError(
+            f"Waterbirds image path escapes its root: {image_filename!r}"
+        ) from error
+    return candidate

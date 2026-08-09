@@ -9,10 +9,18 @@ six-run ordinary ViT candidate grid. The binding documents are
 precedence.
 
 Copy `configs/anchorcal/paths.local.example.yaml` to the ignored
-`configs/anchorcal/paths.local.yaml`, fill the four audited data/mask paths,
-then use `scripts/anchorcal/submit_campaign.sh` from a clean committed TIGRIS
-checkout. See `docs/anchorcal/TIGRIS_RUNBOOK.md` and the implementation
-traceability log for the exact workflow.
+`configs/anchorcal/paths.local.yaml` and verify the frozen Waterbirds-95 image,
+metadata, and VLM-mask paths. The mask input is the audited
+OpenCLIP-LAION + DINOvIT `prediction_cmap` bank at
+`/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap`.
+AnchorCal joins it producer-first from the complete metadata `img_filename`,
+decodes Pascal/VOC foreground class 1, and requires complete official split-0/1
+coverage; official split 2 has no mask requirement. Preflight freezes the
+one-to-one mapping and per-file hashes in `preflight/mask_manifest.json` with
+schema `anchorcal-vlm-mask-manifest-v1`. Then use
+`scripts/anchorcal/submit_campaign.sh` from a clean committed TIGRIS checkout.
+See `docs/anchorcal/TIGRIS_RUNBOOK.md` and the implementation traceability log
+for the exact workflow.
 
 The existing `setv` package below is retained for historical reproducibility;
 AnchorCal does not import its expert, selector, or fusion logic.

@@ -1,4 +1,9 @@
-"""Strict binary-mask validation, morphology, and patch geometry."""
+"""Boolean-mask morphology and patch geometry.
+
+``load_binary_mask`` is retained for synthetic fixtures and legacy Boolean
+artifacts.  Production Waterbirds VLM maps are decoded only by
+``anchorcal.vlm_masks.decode_vlm_mask``.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,6 @@ import numpy as np
 from PIL import Image
 
 from .errors import PreflightError
-from .io import hash_object, sha256_file
 
 
 ALLOWED_ENCODINGS = ({0, 1}, {0, 255})
@@ -118,24 +122,4 @@ def mask_geometry(mask: np.ndarray, radius: int = 8, patch_size: int = 16) -> di
         "compactness": 4.0 * math.pi * area / max(perimeter * perimeter, 1.0),
         "eligible_background_patches": float(pure_background),
     }
-
-
-def mask_manifest_entry(img_id: int, relative_path: str, path: Path) -> dict[str, object]:
-    binary = load_binary_mask(path)
-    with Image.open(path) as opened:
-        raw = np.asarray(opened)
-    return {
-        "img_id": int(img_id),
-        "relative_path": relative_path,
-        "sha256": sha256_file(path),
-        "width": int(binary.shape[1]),
-        "height": int(binary.shape[0]),
-        "unique_values": [int(item) for item in np.unique(raw).tolist()],
-        "foreground_pixels": int(binary.sum()),
-    }
-
-
-def mask_bank_hash(entries: list[dict[str, object]]) -> str:
-    normalized = sorted(entries, key=lambda item: int(item["img_id"]))
-    return hash_object(normalized)
 

@@ -35,6 +35,7 @@ from .storage import (
     verify_candidate_storage,
 )
 from .training import UpdateScheduler, make_adamw
+from .vlm_masks import VlmMaskBank, load_vlm_mask_bank
 
 
 ELIGIBLE_SCORE_KEYS = {
@@ -239,6 +240,7 @@ def _ensure_shared_epoch_zero(
     oracle_val: pd.DataFrame,
     test: pd.DataFrame,
     device,
+    mask_bank: VlmMaskBank,
 ) -> dict[str, Any]:
     namespace = "debug/diagnostics/shared_epoch_zero" if config["runtime"]["debug"] else "diagnostics/shared_epoch_zero"
     root = output / namespace
@@ -266,7 +268,9 @@ def _ensure_shared_epoch_zero(
             ):
                 raise PreflightError("shared epoch-zero artifacts failed hash verification")
             return existing
-        practical = evaluate_practical_criteria(model, biased_val, config, device)
+        practical = evaluate_practical_criteria(
+            model, biased_val, config, device, mask_bank=mask_bank
+        )
         oracle = evaluate_plain(model, oracle_val, config, device)
         hidden_test = evaluate_plain(model, test, config, device)
         _save_epoch_zero(root, practical, oracle, hidden_test)
@@ -326,7 +330,7 @@ def train_candidate_run(
     # append-only submission_receipts/jobs records instead: a preempted run
     # must be resumable by a replacement Slurm job with a different job ID.
     run_manifest = {
-        "schema_version": "anchorcal-candidate-run-v2",
+        "schema_version": "anchorcal-candidate-run-v3",
         "run_id": run_id,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
@@ -339,6 +343,9 @@ def train_candidate_run(
         "metadata_path": config["paths"]["metadata_path"],
         "metadata_sha256": preflight_report["metadata_sha256"],
         "mask_bank_sha256": preflight_report["mask_bank_sha256"],
+        "mask_manifest_sha256": preflight_report["mask_manifest_sha256"],
+        "mask_source": preflight_report["mask_source"],
+        "mask_contract": dict(config["masks"]),
         "preprocessing_manifest_sha256": preflight_report["preprocessing"][
             "manifest_sha256"
         ],
@@ -368,6 +375,10 @@ def train_candidate_run(
             )
     else:
         atomic_write_json(run_manifest_path, run_manifest)
+    # A completed trajectory may be resumed long after its original job.  Do
+    # not return its receipt until the authoritative source bank still matches
+    # the frozen manifest byte-for-byte.
+    mask_bank = load_vlm_mask_bank(config)
     completion_path = run_dir / "completion.json"
     if completion_path.is_file():
         storage_manifest = verify_candidate_storage(
@@ -456,7 +467,14 @@ def train_candidate_run(
     )
     metric_names = CANDIDATE_SCALAR_METRICS
     epoch_zero_manifest = _ensure_shared_epoch_zero(
-        output, config, model, biased_val, oracle_val, test, device
+        output,
+        config,
+        model,
+        biased_val,
+        oracle_val,
+        test,
+        device,
+        mask_bank,
     )
     history: list[dict[str, Any]] = []
     with CandidateStorage(
@@ -576,7 +594,9 @@ def train_candidate_run(
                         "training": training,
                     },
                 )
-            practical = evaluate_practical_criteria(model, biased_val, config, device)
+            practical = evaluate_practical_criteria(
+                model, biased_val, config, device, mask_bank=mask_bank
+            )
             oracle = evaluate_plain(model, oracle_val, config, device)
             hidden_test = evaluate_plain(model, test, config, device)
             biased_loss = float(np.mean(practical["ordinary"]["loss"]))

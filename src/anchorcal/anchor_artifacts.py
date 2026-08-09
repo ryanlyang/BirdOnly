@@ -154,6 +154,8 @@ def verify_anchor_artifacts(
             raise PreflightError("AnchorCal decision receipt hash is invalid")
         receipt = _json(receipt_path, "AnchorCal decision receipt")
         provenance = receipt.get("provenance", {})
+        preflight_path = output / "preflight" / "report.json"
+        preflight = _json(preflight_path, "preflight report")
         subset = pd.read_csv(expected_paths["criterion_subset"])
         if (
             "img_id" not in subset
@@ -208,6 +210,16 @@ def verify_anchor_artifacts(
             != sha256_file(manifest_path)
             or provenance.get("criterion_results_sha256")
             != records["criterion_results"]["sha256"]
+            or Path(str(provenance.get("preflight_report", ""))).resolve()
+            != preflight_path.resolve()
+            or provenance.get("preflight_report_sha256")
+            != sha256_file(preflight_path)
+            or provenance.get("mask_bank_sha256")
+            != preflight.get("mask_bank_sha256")
+            or provenance.get("mask_manifest_sha256")
+            != preflight.get("mask_manifest_sha256")
+            or provenance.get("mask_source") != preflight.get("mask_source")
+            or provenance.get("mask_contract") != config.get("masks")
         ):
             raise PreflightError(
                 "AnchorCal artifacts differ from the frozen decision receipt"

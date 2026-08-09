@@ -200,10 +200,13 @@ class CandidateBoundaryTests(unittest.TestCase):
         )
         parameter_names = [argument.arg for argument in initializer.args.args]
         self.assertNotIn("mask_root", parameter_names)
+        self.assertNotIn("mask_bank", parameter_names)
         class_names = {
             node.id for node in ast.walk(candidate_class) if isinstance(node, ast.Name)
         }
         self.assertNotIn("load_binary_mask", class_names)
+        self.assertNotIn("load_vlm_mask_bank", class_names)
+        self.assertNotIn("VlmMaskBank", class_names)
         self.assertIn("stateless_image_train_transform", class_names)
 
 
@@ -231,7 +234,16 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
             )
             for path, payload in (
                 (preflight / "report.json", {"status": "passed"}),
-                (preflight / "mask_manifest.json", {"masks": "frozen"}),
+                (
+                    preflight / "mask_manifest.json",
+                    {
+                        "schema_version": "anchorcal-vlm-mask-manifest-v1",
+                        "producer": (
+                            "openclip_laion_dinovit_weclipplus_prediction_cmap"
+                        ),
+                        "runtime_resolution": "frozen_manifest_only",
+                    },
+                ),
                 (preflight / "preprocessing_manifest.json", {"resize": 248}),
                 (splits / "manifest.json", {"split": "frozen"}),
                 (geometry / "manifest.json", {"geometry": "frozen"}),
@@ -246,7 +258,23 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                     "output_root": str(output),
                     "metadata_path": str(output / "metadata.csv"),
                     "waterbirds_root": str(output / "waterbirds"),
-                    "cub_waterbirds_mask_root": str(output / "masks"),
+                    "vlm_mask_root": str(output / "prediction_cmap"),
+                },
+                "masks": {
+                    "source": (
+                        "openclip_laion_dinovit_weclipplus_prediction_cmap"
+                    ),
+                    "mapping_mode": (
+                        "weclip_producer_first_with_explicit_legacy_fallbacks"
+                    ),
+                    "format": "voc_colormap_class_ids",
+                    "foreground_class_ids": [1],
+                    "allowed_class_ids": [0, 1],
+                    "minimum_foreground_fraction": 0.0,
+                    "maximum_foreground_fraction": 1.0,
+                    "required_official_splits": [0, 1],
+                    "optional_official_splits": [2],
+                    "runtime_resolve_from_manifest_only": True,
                 },
                 "runtime": {"debug": True},
                 "branches": {

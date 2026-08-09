@@ -12,6 +12,10 @@ import pandas as pd
 from scipy.stats import kendalltau, pearsonr, spearmanr
 
 from .checkpoint_verification import verify_candidate_checkpoint_artifacts
+from .candidate_provenance import (
+    load_candidate_preflight_binding,
+    require_candidate_run_manifest,
+)
 from .errors import AuditFailure, PreflightError
 from .anchor_artifacts import verify_anchor_artifacts
 from .hidden_storage import HIDDEN_FILENAME, HiddenMetricsReader
@@ -233,6 +237,7 @@ def run_hidden_stage(
         raise PreflightError("selector-only table changed or escaped its namespace")
     table = pd.read_csv(selector_path)
     candidate_root = output / ("debug/candidates" if debug else "candidates")
+    preflight = load_candidate_preflight_binding(config)
     expected_visible_checkpoint_hashes = selection.get(
         "visible_checkpoint_manifest_sha256"
     )
@@ -274,14 +279,13 @@ def run_hidden_stage(
         run_manifest = json.loads(
             (run_dir / "run_manifest.json").read_text(encoding="utf-8")
         )
-        if (
-            run_manifest.get("run_id") != run_id
-            or run_manifest.get("resolved_config_sha256")
-            != config["resolved_config_sha256"]
-            or run_manifest.get("decision_receipt_sha256")
-            != selection["anchorcal_decision_sha256"]
-        ):
-            raise PreflightError(f"candidate provenance mismatch after receipt: {run_id}")
+        require_candidate_run_manifest(
+            run_manifest,
+            config,
+            preflight,
+            expected_run_id=str(run_id),
+            expected_decision_sha256=selection["anchorcal_decision_sha256"],
+        )
         checkpoint_verification = verify_candidate_checkpoint_artifacts(
             run_dir,
             expected_run_id=str(run_id),

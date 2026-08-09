@@ -17,7 +17,7 @@ def discover_candidates(search_roots: list[str | Path]) -> dict[str, list[str]]:
 
     releases: set[str] = set()
     metadata: set[str] = set()
-    segmentations: set[str] = set()
+    vlm_masks: set[str] = set()
     for root_value in search_roots:
         root = Path(root_value).expanduser()
         if not root.exists():
@@ -26,12 +26,14 @@ def discover_candidates(search_roots: list[str | Path]) -> dict[str, list[str]]:
             if candidate.is_dir() and (candidate / "metadata.csv").is_file():
                 releases.add(str(candidate.resolve()))
                 metadata.add(str((candidate / "metadata.csv").resolve()))
-        for candidate in root.rglob("segmentations"):
-            if candidate.is_dir() and candidate.parent.name == "CUB_200_2011":
-                segmentations.add(str(candidate.resolve()))
+        for results_root in root.rglob(
+            "results_waterbirds95_openclip_laion_dinovit"
+        ):
+            candidate = results_root / "val" / "prediction_cmap"
+            if candidate.is_dir():
+                vlm_masks.add(str(candidate.resolve()))
     return {
         "waterbirds_root": sorted(releases),
         "metadata_path": sorted(metadata),
-        "cub_source_segmentation_root": sorted(segmentations),
-        "cub_waterbirds_mask_root": sorted(segmentations),
+        "vlm_mask_root": sorted(vlm_masks),
     }

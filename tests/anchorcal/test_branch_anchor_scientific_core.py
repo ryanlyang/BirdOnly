@@ -45,6 +45,12 @@ from anchorcal.metrics import (  # noqa: E402
 )
 from anchorcal.seeds import stable_seed  # noqa: E402
 from anchorcal.io import hash_object  # noqa: E402
+from anchorcal.vlm_masks import (  # noqa: E402
+    VlmMaskBank,
+    decode_vlm_mask,
+    producer_vlm_mask_name,
+    vlm_mask_manifest_entry,
+)
 
 try:  # The local lightweight environment may intentionally omit torch.
     import torch
@@ -180,18 +186,40 @@ class BackgroundBudgetAndViewTests(unittest.TestCase):
             mask_root.mkdir()
 
             image = np.full((224, 224, 3), 127, dtype=np.uint8)
-            valid_mask = np.zeros((224, 224), dtype=np.uint8)
-            valid_mask[100:108, 100:108] = 255
-            invalid_mask = np.full((224, 224), 255, dtype=np.uint8)
-            invalid_mask[0:16, 0:16] = 0
-            for filename, mask in (
-                ("valid.jpg", valid_mask),
-                ("invalid.jpg", invalid_mask),
+            valid_mask = np.zeros((224, 224), dtype=bool)
+            valid_mask[100:108, 100:108] = True
+            invalid_mask = np.ones((224, 224), dtype=bool)
+            invalid_mask[0:16, 0:16] = False
+            mask_entries = {}
+            for metadata_index, (img_id, filename, mask) in enumerate(
+                (
+                    (1, "valid.jpg", valid_mask),
+                    (2, "invalid.jpg", invalid_mask),
+                )
             ):
                 Image.fromarray(image, mode="RGB").save(image_root / filename)
-                Image.fromarray(mask, mode="L").save(
-                    mask_root / Path(filename).with_suffix(".png")
+                encoded = np.zeros((224, 224, 3), dtype=np.uint8)
+                encoded[mask] = np.asarray([128, 0, 0], dtype=np.uint8)
+                mask_path = mask_root / producer_vlm_mask_name(filename)
+                Image.fromarray(encoded, mode="RGB").save(mask_path)
+                decoded = decode_vlm_mask(mask_path)
+                mask_entries[img_id] = vlm_mask_manifest_entry(
+                    img_id=img_id,
+                    metadata_index=metadata_index,
+                    img_filename=filename,
+                    split=1,
+                    root=mask_root,
+                    path=mask_path,
+                    mapping_rule="weclip_producer_flattened_relative_stem",
+                    decoded=decoded,
                 )
+            mask_bank = VlmMaskBank(
+                root=mask_root.resolve(),
+                entries=mask_entries,
+                mask_bank_sha256="synthetic-test-bank",
+                minimum_foreground_fraction=0.0,
+                maximum_foreground_fraction=1.0,
+            )
 
             columns = ["img_id", "img_filename", "y", "place", "split"]
             pd.DataFrame([[1, "valid.jpg", 0, 0, 1]], columns=columns).to_csv(
@@ -206,7 +234,11 @@ class BackgroundBudgetAndViewTests(unittest.TestCase):
                 "paths": {
                     "output_root": str(output),
                     "waterbirds_root": str(image_root),
-                    "cub_waterbirds_mask_root": str(mask_root),
+                    "vlm_mask_root": str(mask_root),
+                },
+                "masks": {
+                    "minimum_foreground_fraction": 0.0,
+                    "maximum_foreground_fraction": 1.0,
                 },
                 "runtime": {"debug": False},
                 "data": {"dilation_radius": 8},
@@ -234,7 +266,7 @@ class BackgroundBudgetAndViewTests(unittest.TestCase):
                     return_value=preprocessing,
                 ),
             ):
-                report = _background_purity_audit(config)
+                report = _background_purity_audit(config, mask_bank)
             self.assertEqual(report["retained_patch_count"], 2)
             self.assertEqual(report["invalid_ids"], [2])
             self.assertIn(
@@ -262,7 +294,7 @@ class BackgroundBudgetAndViewTests(unittest.TestCase):
                 ),
                 self.assertRaises(AuditFailure),
             ):
-                _background_purity_audit(config)
+                _background_purity_audit(config, mask_bank)
 
 
 class MetricsCalibrationAndCompetenceTests(unittest.TestCase):

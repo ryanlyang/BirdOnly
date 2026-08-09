@@ -25,6 +25,22 @@ data:
   crop_fallback_rate_gate: 0.001
   dilation_radius: 8
 
+masks:
+  source: openclip_laion_dinovit_weclipplus_prediction_cmap
+  mapping_mode: weclip_producer_first_with_explicit_legacy_fallbacks
+  mapping_version: weclip-img-filename-v1
+  decoder_version: pascal-voc-rgb-class-id-v1
+  manifest_schema: anchorcal-vlm-mask-manifest-v1
+  format: voc_colormap_class_ids
+  foreground_class_ids: [1]
+  allowed_class_ids: [0, 1]
+  interpolation: nearest
+  minimum_foreground_fraction: 0.0
+  maximum_foreground_fraction: 1.0
+  required_official_splits: [0, 1]
+  optional_official_splits: [2]
+  runtime_resolve_from_manifest_only: true
+
 pretrained:
   model: hf_hub:timm/vit_small_patch16_224.augreg_in21k_ft_in1k
   repository: timm/vit_small_patch16_224.augreg_in21k_ft_in1k
@@ -114,9 +130,8 @@ runtime:
 
 paths:
   repo_root: /home/ryreu/guided_cnn/BirdOnly
-  waterbirds_root: REQUIRED_ABSOLUTE_PATH
-  metadata_path: REQUIRED_ABSOLUTE_PATH
-  cub_source_segmentation_root: REQUIRED_ABSOLUTE_PATH
-  cub_waterbirds_mask_root: REQUIRED_ABSOLUTE_PATH
+  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot

@@ -5,6 +5,40 @@ Local tests use generated fixtures and small synthetic models. Production
 evidence is created separately under the frozen campaign output root; no entry
 below claims that the real dataset or TIGRIS GH200 was available locally.
 
+## Authoritative VLM-mask correction: implemented and locally revalidated
+
+- The binding specifications now replace the earlier CUB-mask assumption with
+  the exact Waterbirds-95 OpenCLIP-LAION + DINOvIT VLM bank at
+  `/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap`.
+- The corrected contract requires a producer-first join from the complete
+  metadata `img_filename`, strict Pascal/VOC class-1 decoding, complete
+  one-to-one coverage for official splits 0 and 1 only, no official split-2
+  mask requirement, and an immutable `preflight/mask_manifest.json` with schema
+  `anchorcal-vlm-mask-manifest-v1` and a deterministic content hash.
+- `Waterbirds100` remains the `y == place` aligned subset of official split 0
+  from `waterbird_complete95_forest2water2`; it is not the separate
+  `waterbird_1.0_forest2water2` release.
+- Replaced both CUB path keys with one locked `vlm_mask_root`; added the exact
+  producer, mapping, decoder, VOC class, nearest-interpolation, split-coverage,
+  and manifest-only-runtime configuration locks.
+- Added `src/anchorcal/vlm_masks.py`; rewrote preflight to audit all images,
+  require and decode only producer-contract splits 0 and 1, inventory rather
+  than require split 2, freeze the manifest before geometry construction, and
+  bind file, decoded-mask, mapping, and decoder hashes.
+- Replaced every branch, geometry, anchor, and practical-candidate CUB lookup
+  with canonical `img_id` plus `img_filename` access through the frozen VLM
+  manifest. Candidate ERM training and oracle/test classification remain
+  mask-free.
+- Bumped incompatible branch and candidate provenance schemas, and bound the
+  VLM root, source, contract, bank hash, and manifest hash through restart,
+  branch, anchor, candidate, decision, and final-campaign verification.
+- On 2026-08-09, the Torch-capable local suites passed **158 AnchorCal tests**
+  and **81 retained SETV tests** (**239 total**). Python compilation, shell
+  syntax checks, CLI/config smoke checks, and `git diff --check` also passed.
+- Real Waterbirds/VLM coverage, the pinned model cache, and GH200 execution
+  remain production preflight and smoke gates on TIGRIS; local fixtures do not
+  claim that external runtime evidence.
+
 ## Phase 0: specification and repository audit
 
 - Read both binding specifications in full. The 112 answered locks, especially
@@ -12,8 +46,10 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
 - Inspected the existing repository, dependency metadata, historical `setv`
   package, TIGRIS handoff, and established `/home/ryreu/guided_cnn/BirdOnly`
   checkout convention.
-- Created and maintained `IMPLEMENTATION_TRACEABILITY.md`. Machine-local data
-  and mask paths are deliberately unresolved and fail closed.
+- Created and maintained `IMPLEMENTATION_TRACEABILITY.md`. At that time,
+  machine-local data and CUB-mask paths were deliberately unresolved; this
+  historical assumption is superseded by the authoritative VLM correction
+  above.
 - Resolved the explicit precedence issues listed at the end of the traceability
   file; no third behavior was invented.
 
@@ -24,9 +60,11 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   validation, canonical IDs, mask provenance/encoding/dimension/uniqueness
   checks, deterministic split CSVs and hashes, model revision/hash locking,
   environment/package manifests, and clean production checkout guard.
-- Review found that distinct source/final mask roots initially lacked an
-  immutable mapping-generation contract. Preflight now requires and verifies
-  `anchorcal_mapping_manifest.json`; a same-tree source remains valid.
+- The original review addressed distinct CUB source/final roots through
+  `anchorcal_mapping_manifest.json`. That historical contract is superseded:
+  the corrected implementation must instead freeze the producer-derived VLM
+  join and per-file hashes in `preflight/mask_manifest.json` using schema
+  `anchorcal-vlm-mask-manifest-v1`.
 - Review also strengthened production preflight to validate fixed TIGRIS repo,
   cache and output roots, the exact interpreter, aarch64, and GH200.
 - Verification: configuration/split/mask tests plus generated-fixture

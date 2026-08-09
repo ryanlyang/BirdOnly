@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -38,6 +39,24 @@ from anchorcal.storage import (  # noqa: E402
     CandidateStorage,
     PredictionBatch,
     SampleMetadata,
+)
+from anchorcal.vlm_masks import (  # noqa: E402
+    VLM_ALLOWED_CLASS_IDS,
+    VLM_DECODER_VERSION,
+    VLM_FOREGROUND_CLASS_IDS,
+    VLM_INTERPOLATION,
+    VLM_MAPPING_MODE,
+    VLM_MAPPING_VERSION,
+    VLM_MASK_FORMAT,
+    VLM_MASK_MANIFEST_SCHEMA,
+    VLM_OPTIONAL_OFFICIAL_SPLITS,
+    VLM_PRODUCER,
+    VLM_REQUIRED_OFFICIAL_SPLITS,
+    decode_vlm_mask,
+    producer_vlm_mask_name,
+    vlm_mask_bank_hash,
+    vlm_mask_contract_hash,
+    vlm_mask_manifest_entry,
 )
 
 
@@ -111,9 +130,36 @@ class AnalysisIntegrationTests(unittest.TestCase):
             self.skipTest(str(error))
         self.temporary = tempfile.TemporaryDirectory()
         self.output = Path(self.temporary.name)
+        self.waterbirds_root = (
+            self.output / "waterbird_complete95_forest2water2"
+        )
+        self.metadata_path = self.waterbirds_root / "metadata.csv"
+        self.vlm_mask_root = self.output / "prediction_cmap"
         self.config_hash = "a" * 64
+        self.mask_contract = {
+            "source": VLM_PRODUCER,
+            "mapping_mode": VLM_MAPPING_MODE,
+            "mapping_version": VLM_MAPPING_VERSION,
+            "decoder_version": VLM_DECODER_VERSION,
+            "manifest_schema": VLM_MASK_MANIFEST_SCHEMA,
+            "format": VLM_MASK_FORMAT,
+            "foreground_class_ids": list(VLM_FOREGROUND_CLASS_IDS),
+            "allowed_class_ids": list(VLM_ALLOWED_CLASS_IDS),
+            "interpolation": VLM_INTERPOLATION,
+            "minimum_foreground_fraction": 0.0,
+            "maximum_foreground_fraction": 1.0,
+            "required_official_splits": list(VLM_REQUIRED_OFFICIAL_SPLITS),
+            "optional_official_splits": list(VLM_OPTIONAL_OFFICIAL_SPLITS),
+            "runtime_resolve_from_manifest_only": True,
+        }
         self.config = {
-            "paths": {"output_root": str(self.output)},
+            "paths": {
+                "output_root": str(self.output),
+                "waterbirds_root": str(self.waterbirds_root),
+                "metadata_path": str(self.metadata_path),
+                "vlm_mask_root": str(self.vlm_mask_root),
+            },
+            "masks": self.mask_contract,
             "runtime": {"debug": True},
             "data": {"crop_fallback_rate_gate": 0.001},
             "resolved_config_sha256": self.config_hash,
@@ -156,12 +202,142 @@ class AnalysisIntegrationTests(unittest.TestCase):
         preflight_root.mkdir(parents=True)
         preprocessing = preflight_root / "preprocessing_manifest.json"
         atomic_write_json(preprocessing, {"schema_version": "synthetic"})
+
+        # This compact source bank exercises both required official-split labels
+        # without attaching a mask to any synthetic oracle/test example below.
+        # The hidden predictions therefore remain untouched-image outputs.
+        rows = (
+            (
+                9001,
+                "001.Synthetic_Bird/synthetic_train.jpg",
+                0,
+                0,
+                0,
+            ),
+            (
+                9002,
+                "002.Synthetic_Bird/synthetic_validation.jpg",
+                1,
+                1,
+                1,
+            ),
+        )
+        self.waterbirds_root.mkdir(parents=True)
+        self.vlm_mask_root.mkdir(parents=True)
+        metadata_lines = ["img_id,img_filename,y,place,split"]
+        entries = []
+        for metadata_index, (img_id, filename, label, place, split) in enumerate(rows):
+            metadata_lines.append(
+                f"{img_id},{filename},{label},{place},{split}"
+            )
+            image_path = self.waterbirds_root / filename
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image = np.zeros((12, 16, 3), dtype=np.uint8)
+            image[..., 0] = 31
+            image[..., 1] = 83
+            image[..., 2] = 149
+            Image.fromarray(image).save(image_path)
+
+            mask_path = self.vlm_mask_root / producer_vlm_mask_name(filename)
+            mask = np.zeros((12, 16, 3), dtype=np.uint8)
+            column_start = 3 if split == 0 else 7
+            mask[3:9, column_start : column_start + 6] = (128, 0, 0)
+            Image.fromarray(mask).save(mask_path)
+            decoded = decode_vlm_mask(mask_path)
+            entry = vlm_mask_manifest_entry(
+                img_id=img_id,
+                metadata_index=metadata_index,
+                img_filename=filename,
+                split=split,
+                root=self.vlm_mask_root,
+                path=mask_path,
+                mapping_rule="weclip_producer_flattened_relative_stem",
+                decoded=decoded,
+            )
+            entry["image_width"] = 16
+            entry["image_height"] = 12
+            entries.append(entry)
+        self.metadata_path.write_text(
+            "\n".join(metadata_lines) + "\n", encoding="utf-8"
+        )
+
+        minimum = self.mask_contract["minimum_foreground_fraction"]
+        maximum = self.mask_contract["maximum_foreground_fraction"]
+        mask_bank_sha256 = vlm_mask_bank_hash(
+            entries,
+            root=self.vlm_mask_root,
+            minimum_foreground_fraction=minimum,
+            maximum_foreground_fraction=maximum,
+        )
+        mask_manifest_path = preflight_root / "mask_manifest.json"
+        mask_contract_sha256 = vlm_mask_contract_hash(self.config)
+        atomic_write_json(
+            mask_manifest_path,
+            {
+                "schema_version": VLM_MASK_MANIFEST_SCHEMA,
+                "status": "passed",
+                "dataset_root": str(self.waterbirds_root.resolve()),
+                "metadata_path": str(self.metadata_path.resolve()),
+                "metadata_sha256": sha256_file(self.metadata_path),
+                "resolved_config_sha256": self.config_hash,
+                "mask_contract_sha256": mask_contract_sha256,
+                "root": str(self.vlm_mask_root.resolve()),
+                "producer": VLM_PRODUCER,
+                "mapping_mode": VLM_MAPPING_MODE,
+                "mapping_version": VLM_MAPPING_VERSION,
+                "decoder_version": VLM_DECODER_VERSION,
+                "format": VLM_MASK_FORMAT,
+                "foreground_class_ids": list(VLM_FOREGROUND_CLASS_IDS),
+                "allowed_class_ids": list(VLM_ALLOWED_CLASS_IDS),
+                "interpolation": VLM_INTERPOLATION,
+                "minimum_foreground_fraction": minimum,
+                "maximum_foreground_fraction": maximum,
+                "required_official_splits": list(VLM_REQUIRED_OFFICIAL_SPLITS),
+                "optional_official_splits": list(VLM_OPTIONAL_OFFICIAL_SPLITS),
+                "runtime_resolution": "frozen_manifest_only",
+                "required_count": len(entries),
+                "required_mapping_audit": {
+                    "expected": len(entries),
+                    "resolved_unique": len(entries),
+                    "missing": 0,
+                    "ambiguous": 0,
+                    "reused": 0,
+                    "producer_name_collisions": 0,
+                },
+                "coverage": {
+                    "0": {"expected": 1, "present": 1},
+                    "1": {"expected": 1, "present": 1},
+                },
+                "optional_split_inventory": {
+                    "expected": 0,
+                    "missing": 0,
+                    "unique": 0,
+                    "ambiguous": 0,
+                },
+                "producer_name_collisions": [],
+                "mapping_rule_counts": {
+                    "weclip_producer_flattened_relative_stem": len(entries)
+                },
+                "aggregate_class_pixel_counts": {"0": 312, "1": 72},
+                "observed_rgb_colors": [[0, 0, 0], [128, 0, 0]],
+                "extras_inventory": {"count": 0, "relative_paths": []},
+                "mask_bank_sha256": mask_bank_sha256,
+                "entries": entries,
+            },
+        )
         atomic_write_json(
             preflight_root / "report.json",
             {
+                "schema_version": "anchorcal-preflight-v1",
                 "status": "passed",
-                "metadata_sha256": "b" * 64,
-                "mask_bank_sha256": "c" * 64,
+                "resolved_config_sha256": self.config_hash,
+                "resolved_paths": self.config["paths"],
+                "metadata_sha256": sha256_file(self.metadata_path),
+                "mask_source": VLM_PRODUCER,
+                "mask_contract_sha256": mask_contract_sha256,
+                "mask_bank_sha256": mask_bank_sha256,
+                "mask_manifest_path": str(mask_manifest_path.resolve()),
+                "mask_manifest_sha256": sha256_file(mask_manifest_path),
                 "preprocessing": {"manifest_sha256": sha256_file(preprocessing)},
                 "git": {"commit": "d" * 40},
             },
@@ -337,7 +513,7 @@ class AnalysisIntegrationTests(unittest.TestCase):
             atomic_write_json(
                 branch_root / "manifest.json",
                 {
-                    "schema_version": "anchorcal-branch-manifest-v3",
+                    "schema_version": "anchorcal-branch-manifest-v4",
                     "branch": branch,
                     "fixed_epoch": 30,
                     "checkpoint": str(checkpoint.resolve()),
@@ -364,6 +540,11 @@ class AnalysisIntegrationTests(unittest.TestCase):
                     "preflight_report_sha256": sha256_file(preflight),
                     "metadata_sha256": preflight_payload["metadata_sha256"],
                     "mask_bank_sha256": preflight_payload["mask_bank_sha256"],
+                    "mask_manifest_sha256": preflight_payload[
+                        "mask_manifest_sha256"
+                    ],
+                    "mask_source": preflight_payload["mask_source"],
+                    "mask_contract": self.config["masks"],
                     "preprocessing_manifest_sha256": sha256_file(preprocessing),
                     "git_commit": preflight_payload["git"]["commit"],
                     "paths": self.config["paths"],
@@ -505,6 +686,22 @@ class AnalysisIntegrationTests(unittest.TestCase):
         )
         payload.setdefault("provenance", {}).update(
             {
+                "preflight_report": str(
+                    (self.output / "preflight" / "report.json").resolve()
+                ),
+                "preflight_report_sha256": sha256_file(
+                    self.output / "preflight" / "report.json"
+                ),
+                "mask_bank_sha256": json.loads(
+                    (self.output / "preflight" / "report.json").read_text(
+                        encoding="utf-8"
+                    )
+                )["mask_bank_sha256"],
+                "mask_manifest_sha256": sha256_file(
+                    self.output / "preflight" / "mask_manifest.json"
+                ),
+                "mask_source": VLM_PRODUCER,
+                "mask_contract": self.config["masks"],
                 "anchor_artifact_manifest": str(artifact_manifest.resolve()),
                 "anchor_artifact_manifest_sha256": sha256_file(artifact_manifest),
                 "criterion_results_sha256": sha256_file(
@@ -524,10 +721,11 @@ class AnalysisIntegrationTests(unittest.TestCase):
         run.mkdir(parents=True)
         preflight = self.output / "preflight" / "report.json"
         anchor_receipt = next((self.output / "debug" / "receipt").glob("anchorcal_decision_*.json"))
+        preflight_payload = json.loads(preflight.read_text(encoding="utf-8"))
         atomic_write_json(
             run / "run_manifest.json",
             {
-                "schema_version": "anchorcal-candidate-run-v2",
+                "schema_version": "anchorcal-candidate-run-v3",
                 "run_id": run_id,
                 "learning_rate": 3.0e-5,
                 "weight_decay": 0.05,
@@ -537,6 +735,12 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 "resolved_config_sha256": self.config_hash,
                 "preflight_report": str(preflight.resolve()),
                 "preflight_report_sha256": sha256_file(preflight),
+                "mask_bank_sha256": preflight_payload["mask_bank_sha256"],
+                "mask_manifest_sha256": preflight_payload[
+                    "mask_manifest_sha256"
+                ],
+                "mask_source": preflight_payload["mask_source"],
+                "mask_contract": self.config["masks"],
             },
         )
         biased_labels = np.asarray([0, 0, 1, 1])
@@ -722,6 +926,37 @@ class AnalysisIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(StorageError, "missing"):
             run_selector_stage(self.config)
 
+    def test_selector_rejects_candidate_vlm_provenance_tampering(self) -> None:
+        manifest = next(
+            (self.output / "debug" / "candidates").glob("*/run_manifest.json")
+        )
+        original = json.loads(manifest.read_text(encoding="utf-8"))
+        cases = {
+            "schema_version": "anchorcal-candidate-run-v2",
+            "mask_bank_sha256": "0" * 64,
+            "mask_manifest_sha256": "f" * 64,
+            "mask_source": "another-mask-source",
+            "mask_contract": {"source": "tampered"},
+        }
+        for field, value in cases.items():
+            with self.subTest(field=field):
+                payload = json.loads(json.dumps(original))
+                payload[field] = value
+                atomic_write_json(manifest, payload)
+                with self.assertRaisesRegex(
+                    AuditFailure, "run/VLM provenance mismatch"
+                ):
+                    run_selector_stage(self.config)
+        atomic_write_json(manifest, original)
+
+    def test_selector_rejects_vlm_source_changed_after_candidate_run(self) -> None:
+        source_mask = next(self.vlm_mask_root.glob("*.png"))
+        source_mask.write_bytes(b"changed after candidate evaluation\n")
+        with self.assertRaisesRegex(
+            PreflightError, "source file no longer matches manifest"
+        ):
+            run_selector_stage(self.config)
+
     def test_hidden_stage_rejects_checkpoint_manifest_changed_after_receipt(self) -> None:
         run_selector_stage(self.config)
         manifest = next(
@@ -732,6 +967,26 @@ class AnalysisIntegrationTests(unittest.TestCase):
         atomic_write_json(manifest, payload)
         with self.assertRaisesRegex(PreflightError, "changed after selection"):
             run_final_analysis(self.config)
+
+    def test_hidden_stage_rejects_candidate_vlm_tampering_after_receipt(self) -> None:
+        run_selector_stage(self.config)
+        manifest = next(
+            (self.output / "debug" / "candidates").glob("*/run_manifest.json")
+        )
+        original = json.loads(manifest.read_text(encoding="utf-8"))
+        for field, value in (
+            ("schema_version", "anchorcal-candidate-run-v2"),
+            ("mask_manifest_sha256", "f" * 64),
+        ):
+            with self.subTest(field=field):
+                payload = json.loads(json.dumps(original))
+                payload[field] = value
+                atomic_write_json(manifest, payload)
+                with self.assertRaisesRegex(
+                    PreflightError, "run/VLM provenance mismatch"
+                ):
+                    run_final_analysis(self.config)
+        atomic_write_json(manifest, original)
 
     def test_branch_position_mode_tamper_is_rejected(self) -> None:
         path = self.output / "debug" / "branches" / "foreground" / "manifest.json"

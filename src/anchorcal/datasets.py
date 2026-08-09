@@ -9,8 +9,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from .data import image_path, mask_path
-from .masks import load_binary_mask
+from .data import image_path
 from .preprocessing import EvaluationPreprocessing
 from .seeds import stateless_rng
 from .transforms import (
@@ -23,6 +22,7 @@ from .transforms import (
     stateless_image_train_transform,
     stateless_train_transform,
 )
+from .vlm_masks import VlmMaskBank
 
 
 class EpochSampler:
@@ -147,7 +147,7 @@ class BranchTrainingDataset:
         self,
         frame: pd.DataFrame,
         image_root: str | Path,
-        mask_root: str | Path,
+        mask_bank: VlmMaskBank,
         *,
         branch: str,
         run_seed: int,
@@ -159,7 +159,7 @@ class BranchTrainingDataset:
             raise ValueError("branch must be foreground or background")
         self.frame = frame.sort_values("img_id", kind="stable").reset_index(drop=True)
         self.image_root = Path(image_root)
-        self.mask_root = Path(mask_root)
+        self.mask_bank = mask_bank
         self.branch = branch
         self.run_seed = int(run_seed)
         self.token_budget = token_budget
@@ -175,7 +175,7 @@ class BranchTrainingDataset:
         epoch, index = key
         row = self.frame.iloc[index]
         image = _load_image(image_path(self.image_root, str(row.img_filename)))
-        mask = load_binary_mask(mask_path(self.mask_root, str(row.img_filename)))
+        mask = self.mask_bank.load(int(row.img_id), str(row.img_filename))
         if self.branch == "foreground":
             transformed = foreground_train_transform(
                 image,
@@ -241,13 +241,13 @@ class EvaluationDataset:
         self,
         frame: pd.DataFrame,
         image_root: str | Path,
-        mask_root: str | Path,
+        mask_bank: VlmMaskBank,
         *,
         preprocessing: EvaluationPreprocessing,
     ) -> None:
         self.frame = frame.sort_values("img_id", kind="stable").reset_index(drop=True)
         self.image_root = Path(image_root)
-        self.mask_root = Path(mask_root)
+        self.mask_bank = mask_bank
         self.preprocessing = preprocessing
 
     def __len__(self) -> int:
@@ -256,7 +256,7 @@ class EvaluationDataset:
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.frame.iloc[index]
         image = _load_image(image_path(self.image_root, str(row.img_filename)))
-        mask = load_binary_mask(mask_path(self.mask_root, str(row.img_filename)))
+        mask = self.mask_bank.load(int(row.img_id), str(row.img_filename))
         transform_options = {
             "image_size": self.preprocessing.image_size,
             "resize_shortest": self.preprocessing.effective_resize_shortest,

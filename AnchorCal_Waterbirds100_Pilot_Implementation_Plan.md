@@ -132,7 +132,7 @@ The official balanced Waterbirds validation split, scored using worst-group accu
 ## 3.1 Included
 
 - Waterbirds100 only.
-- Human-verified or otherwise trusted bird segmentation masks.
+- The fixed, audited Waterbirds-95 VLM bird-mask bank specified in Section 5.1.
 - Official Waterbirds training images filtered to aligned groups only.
 - A custom fully correlated validation split drawn from those aligned training images.
 - Official Waterbirds validation as a group-aware oracle.
@@ -178,8 +178,8 @@ Do not implement the following in this first pilot:
 - robust training methods beyond ERM;
 - additional datasets;
 - additional spurious-correlation strengths;
-- VLM-generated masks;
-- imperfect-mask experiments;
+- alternative VLM generations, alternative mask sources, or imperfect-mask
+  comparisons beyond the fixed audited bank used by this pilot;
 - distilled ordinary-ViT anchors;
 - multiple independent anchor families;
 - learned combinations of validation criteria;
@@ -335,14 +335,61 @@ The foreground and background branches train on `expert_train` and calibrate on 
 
 ## 5.1 Mask assumptions
 
-This pilot assumes access to high-quality bird segmentation masks for:
+The authoritative mask input is the fixed OpenCLIP-LAION + DINOvIT WeCLIP+
+`prediction_cmap` bank at:
 
-- candidate training images;
-- biased-validation images;
-- oracle validation images;
-- test images.
+```text
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+```
 
-The masks may be human-created or human-verified. Mask generation is outside this pilot.
+This is an audited VLM teacher-map bank, not an official CUB ground-truth
+segmentation bank. Do not mix it with CUB segmentations, historical WeCLIP+
+outputs, or the separately generated `results_waterbirds100_*` bank. The name
+`Waterbirds100` in this pilot continues to mean the `y == place` subset of the
+standard Waterbirds-95 release defined in Section 4.1; it does not select a
+different dataset release or mask bank.
+
+Resolve a mask from the metadata row's complete dataset-relative
+`img_filename`. Reproduce the producer's
+`generate_pseudo_masks_waterbirds._make_image_id` rule: remove the final image
+extension, replace path separators with `_`, replace every run outside
+`[A-Za-z0-9_-]` with `_`, strip leading and trailing underscores, and append
+`.png`. Reject absolute or escaping metadata paths and flattened-name
+collisions. The exact producer name is tried first. Any explicitly supported
+legacy layout is only a recorded fallback after the producer name is absent;
+zero matches, multiple matches, or one mask resolving to multiple metadata rows
+is a preflight failure. Never join by DataFrame row position, class, split-local
+position, or data-loader order.
+
+The PNGs are categorical Pascal/VOC color maps. Preserve their categorical
+colors, decode exact VOC class IDs, reject unknown or unexpected colors and
+class IDs, and define the Boolean bird mask as `class_id == 1`. In this bank,
+class 0 is RGB `[0, 0, 0]` and class 1 is RGB `[128, 0, 0]`. Do not treat these
+files as normalized RGB images, grayscale heat maps, or binary white
+`{0, 255}` masks. All later references to a binary mask mean the Boolean result
+of this strict decode.
+
+Complete, one-to-one mask coverage is required for every metadata row in
+official splits 0 and 1. Official split 2 has no mask requirement: missing test
+masks must not fail preflight, and reporting-only classification on untouched
+test RGB images must not try to load masks. Extra PNGs, including separately
+generated test maps, may be inventoried but do not change the contract.
+
+Before any training, write the immutable VLM mapping manifest
+`preflight/mask_manifest.json`, with schema
+`anchorcal-vlm-mask-manifest-v1`, sorted by canonical `img_id`. It must bind the
+resolved dataset, metadata hash, exact VLM root, the locked producer identifier,
+mapping and decoder implementation versions, map format, required splits, and
+the AnchorCal configuration or checkout revision. It does not claim an unknown
+external GALS producer-source revision. For each required row it records at
+least `img_id`,
+`img_filename`, official split, producer-derived name, resolved mask path,
+mapping rule, image and mask dimensions, decoded colors or class IDs,
+foreground count or fraction, file size, and mask SHA-256. It also records
+coverage by split, missing/ambiguous/collision reports, unused extras, and a
+deterministic content hash over the canonically serialized entries. Every
+downstream stage verifies the frozen manifest and its hash rather than resolving
+masks again inside workers.
 
 ## 5.2 Joint image-mask transforms
 
@@ -2618,5 +2665,5 @@ If that chain holds in this minimal Waterbirds100 pilot, the project has a stron
 - group-inference criteria;
 - distilled standard-ViT anchors;
 - additional anchor families;
-- VLM-generated masks;
+- alternative mask sources and imperfect-mask studies;
 - a full benchmark of model-selection criteria.

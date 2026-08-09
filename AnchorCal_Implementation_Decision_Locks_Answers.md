@@ -19,7 +19,8 @@ The overall policy is:
 
 Most of the reviewer recommendations are accepted. The main clarifications or overrides are:
 
-1. Source masks may use either `{0, 1}` or `{0, 255}` encoding. Any other value set fails preflight.
+1. Source masks are the locked Waterbirds-95 VLM `prediction_cmap` PNGs and
+   use strict categorical VOC decoding with foreground class ID 1.
 2. Empty stochastic foreground crops use a bounded rejection sampler and a logged deterministic fallback. Excessive fallbacks abort the run.
 3. The background branch does **not** sample with replacement in the primary design. The token budget falls back from 64 to 48 or 32 under a prespecified coverage rule.
 4. The foreground and background branches freeze at fixed epoch 30. The calibration split is not used for branch checkpoint selection.
@@ -27,12 +28,94 @@ Most of the reviewer recommendations are accepted. The main clarifications or ov
 6. The blur baseline uses mask-normalized background-only convolution so bird color cannot bleed into the blurred background.
 7. A small set of rolling best candidate checkpoints is retained, rather than saving all epochs or saving none.
 8. The pilot creates an AnchorCal decision receipt before the final joined analysis, but this remains an exploratory study rather than a strict blinded preregistration.
-9. Exact Waterbirds and CUB-mask paths on TIGRIS were not supplied. The implementation must resolve and freeze them in a local path configuration instead of guessing.
+9. The exact Waterbirds-95 image, metadata, and VLM-mask roots on TIGRIS are
+   established below and must be frozen in the local path configuration.
 10. HDF5 is the primary candidate-output storage backend.
 11. The originally pinned empty Hugging Face revision is replaced by a populated, hash-verified revision.
 12. Eight-view saliency uses summed signed occurrence contributions at repeated source coordinates, avoiding unintended double averaging.
 13. Candidate and anchor token swapping share donor image IDs but use architecture-appropriate fixed token assignments.
 14. All remaining seeds, optimizer groups, scheduler timing, debug staging, and storage transaction rules are explicitly frozen.
+
+---
+
+# Authoritative VLM-Mask Correction and Supersession
+
+This section is a later binding correction. It supersedes every conflicting
+CUB-mask, no-VLM, binary-source-encoding, relative-CUB-stem, and test-mask
+requirement in the implementation plan and in earlier answers below. In
+particular, it overrides the implementation plan's Sections 3.1, 3.2, and 5.1
+and closing mask-source outlook; Summary items 1 and 9; Questions 2, 4, 89, and
+the mask-mapping portion of Question 108; the mask fields in the Final Resolved
+Configuration Snapshot; and the mask entries under Remaining
+Environment-Specific Preflight Items. Non-conflicting requirements remain
+binding.
+
+The dataset definition does **not** change:
+
+```text
+Waterbirds100 = official split-0 rows with y == place
+                 from waterbird_complete95_forest2water2
+```
+
+It is not the separately regenerated `waterbird_1.0_forest2water2` directory.
+Canonical sample identity remains metadata `img_id`; DataFrame row position is
+never an identity or join key.
+
+The authoritative mask source is the fixed OpenCLIP-LAION + DINOvIT WeCLIP+
+VLM `prediction_cmap` bank:
+
+```text
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+```
+
+This bank is an audited pilot input, not official CUB ground truth. Do not mix
+it with CUB segmentations, historical WeCLIP+ output trees, the separately
+generated Waterbirds-100 VLM root, or another mask family.
+
+Join each metadata row from its complete dataset-relative `img_filename`.
+Reproduce `generate_pseudo_masks_waterbirds._make_image_id`: reject absolute or
+escaping paths, remove the final extension, replace path separators with `_`,
+replace each run outside `[A-Za-z0-9_-]` with `_`, strip leading and trailing
+underscores, and append `.png`. Detect producer-name collisions before lookup
+and fail rather than guessing collision suffixes. Resolve the exact producer
+name first. An explicitly enumerated legacy layout may be consulted only after
+the producer name is absent; the chosen rule must be recorded, and zero matches,
+multiple matches, or mask reuse across metadata rows is fatal. Never join by
+`img_id`, row number, label, split-local order, or loader iteration order.
+
+Read each PNG as a categorical Pascal/VOC map. Preserve RGB or palette
+semantics, decode exact VOC class IDs, reject unknown or unexpected colors and
+class IDs, and construct the Boolean bird mask as `class_id == 1`. Class 0 is
+RGB `[0, 0, 0]`; class 1 is RGB `[128, 0, 0]`. Grayscale thresholding,
+normalizing the PNG as an input image, or accepting a white `{0, 255}` fixture
+does not implement this producer contract. Existing downstream requirements
+for Boolean masks, nearest-neighbor mask interpolation, joint geometry,
+dilation, purity, and source-resolution composition apply after this decode.
+
+Require complete one-to-one coverage for all official split-0 and split-1
+metadata rows. Official split 2 has no mask requirement, and missing test masks
+must not fail preflight. Mask-conditioned construction and evaluation use only
+split-0/1 rows. Official-test reporting evaluates untouched RGB images and must
+not attempt to load a mask. Extra mask files may be inventoried but cannot
+change the required set or become an implicit input.
+
+Preflight must publish `preflight/mask_manifest.json` with schema
+`anchorcal-vlm-mask-manifest-v1`, canonically sorted by `img_id`, before
+training. Its provenance binds the resolved dataset and metadata hash, exact
+VLM root, locked producer identifier, mapping and decoder implementation
+versions, map format, foreground IDs `[1]`, required splits `[0, 1]`, and the
+AnchorCal configuration or checkout revision. The external GALS producer-source
+revision is not established; do not invent one or relabel the AnchorCal commit
+as that external revision.
+
+Each required-row entry records `img_id`, metadata audit index,
+`img_filename`, official split, derived producer name, resolved mask path,
+mapping rule, image and mask dimensions, decoded color/class counts,
+foreground count or fraction, file size, and mask SHA-256. The manifest also
+records coverage by split, missing/ambiguous/collision/reuse reports, unused
+extras, and a deterministic SHA-256 over canonical serialized entries. All
+downstream branch, anchor, candidate, campaign, and decision receipts bind and
+reverify this frozen manifest hash; workers never repeat best-effort mapping.
 
 ---
 
@@ -85,21 +168,29 @@ If the available metadata file does not contain a unique `img_id`, stop. Do not 
 
 **Decision**
 
-Use the **official CUB segmentation masks mapped into Waterbirds image coordinates**. No VLM masks are used in this pilot.
+Use the fixed Waterbirds-95 OpenCLIP-LAION + DINOvIT WeCLIP+
+`prediction_cmap` bank named in the Authoritative VLM-Mask Correction above.
+These are categorical VLM teacher maps and are not represented as official CUB
+ground truth.
 
-The authoritative mask object is the final Waterbirds-coordinate binary bird mask associated one-to-one with `img_id`.
+The authoritative runtime mask object is the Boolean Waterbirds-coordinate bird
+mask obtained by strict VOC class-1 decoding and associated one-to-one with
+canonical `img_id` through the frozen `img_filename` mapping manifest.
 
 **Implementation lock**
 
 A valid mask bank must satisfy:
 
-- exactly one mask per used Waterbirds `img_id`;
+- exactly one mask per required official split-0/1 Waterbirds `img_id`;
 - exact geometric correspondence with the Waterbirds composite image;
-- traceability to the official CUB segmentation source;
-- no automatically generated VLM substitution;
+- traceability to the exact VLM root, locked producer identifier, mapping and
+  decoder implementation versions, and per-file SHA-256; do not claim an
+  unknown external GALS producer-source revision;
 - no mix of mask sources inside the pilot.
 
-If the repository already contains a human-verified CUB-derived Waterbirds mask bank, use that bank after hashing it. If only source CUB masks exist, create the Waterbirds-coordinate mask bank once using the exact mapping/generation metadata, save it immutably, and then treat that generated bank as the authoritative pilot mask bank.
+Resolve the bank once during preflight, publish the immutable mapping manifest,
+and require every later job to consume and verify that manifest. Do not replace,
+regenerate, or repair the locked masks inside this pilot.
 
 ---
 
@@ -119,7 +210,9 @@ Do not:
 - choose one duplicate arbitrarily;
 - attempt an automatic segmentation repair.
 
-The preflight report must list every offending `img_id` and reason. Training begins only after the mask bank passes completely.
+The preflight report must list every offending required split-0/1 `img_id` and
+reason. Training begins only after the required bank passes completely. Missing
+official split-2 masks are expected and are not offending rows.
 
 ---
 
@@ -127,29 +220,32 @@ The preflight report must list every offending `img_id` and reason. Training beg
 
 **Decision**
 
-Accept either of these exact source encodings:
-
-```text
-{0, 1}
-{0, 255}
-```
-
-Convert with:
+Treat the source PNG as a categorical Pascal/VOC class map and select foreground
+class ID 1:
 
 ```python
-binary_mask = source_mask > 0
+class_ids = decode_pascal_voc_colors(source_rgb)
+binary_mask = class_ids == 1
 ```
+
+For this producer, background class 0 is RGB `[0, 0, 0]` and selected
+foreground class 1 is RGB `[128, 0, 0]`.
 
 **Implementation lock**
 
-Allowed unique-value sets must be subsets of either `{0, 1}` or `{0, 255}`. Any mask containing intermediate grayscale values, negative values, more than two semantic values, NaNs, or unexpected channels fails preflight.
+Preserve categorical RGB or palette values until decoding. Reject unknown VOC
+colors, unexpected class IDs, corrupt data, invalid channels, or a source that
+only passes after grayscale/continuous thresholding. A white `[255, 255, 255]`
+foreground fixture does not represent VOC class 1 and must fail this configured
+decoder.
 
 After conversion:
 
 - dtype is boolean;
 - mask must contain at least one foreground pixel;
 - mask must not cover the complete image;
-- save the unique-value audit in the preflight report.
+- save decoded class/color counts in the immutable mapping manifest and
+  preflight report.
 
 ---
 
@@ -2116,11 +2212,18 @@ ANCHORCAL_OUTPUT_ROOT
 
 HF_HOME
 /home/ryreu/.cache/huggingface
+
+WATERBIRDS_ROOT
+/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+
+WATERBIRDS_METADATA
+/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+
+VLM_MASK_ROOT
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-The exact Waterbirds and CUB-mask roots were not supplied in the available project context. Do not invent them.
-
-Require a local uncommitted configuration:
+Freeze these established TIGRIS paths in the local uncommitted configuration:
 
 ```text
 configs/anchorcal/paths.local.yaml
@@ -2130,10 +2233,9 @@ with:
 
 ```yaml
 repo_root: /home/ryreu/guided_cnn/BirdOnly
-waterbirds_root: REQUIRED_ABSOLUTE_PATH
-metadata_path: REQUIRED_ABSOLUTE_PATH
-cub_source_segmentation_root: REQUIRED_ABSOLUTE_PATH
-cub_waterbirds_mask_root: REQUIRED_ABSOLUTE_PATH
+waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
 hf_home: /home/ryreu/.cache/huggingface
 output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 ```
@@ -2142,14 +2244,18 @@ Preflight requirements:
 
 - `waterbirds_root` basename or contents must identify `waterbird_complete95_forest2water2`;
 - `metadata_path` must equal the authoritative metadata file under that release;
-- source segmentation and final Waterbirds-coordinate mask roots must satisfy
-  the mapping and dimension rules in Question 108;
-- final mask root must pass the one-mask-per-`img_id` audit;
+- `vlm_mask_root` must equal the exact Waterbirds-95 VLM root above;
+- the VLM bank must pass the producer-first `img_filename` join, strict VOC
+  class-1 decode, dimension, split-0/1 coverage, and one-mask-per-required-`img_id`
+  audits;
+- preflight must write `preflight/mask_manifest.json` with schema
+  `anchorcal-vlm-mask-manifest-v1`, plus its immutable content hash;
 - all paths are converted to absolute resolved paths;
 - path config is copied into the run manifest;
 - no training job starts while a `REQUIRED_ABSOLUTE_PATH` value remains.
 
-A discovery script may search the user's accessible storage and print unique candidates, but it must not choose among multiple matches automatically.
+A discovery script may verify the fixed roots and may print other candidates for
+diagnosis, but it must never substitute a different VLM bank automatically.
 
 ---
 
@@ -2745,7 +2851,7 @@ vector is constant:
 
 ---
 
-## 108. What exactly does Waterbirds100 mean, and how are CUB masks mapped?
+## 108. What exactly does Waterbirds100 mean, and how are VLM masks mapped?
 
 **Decision**
 
@@ -2753,22 +2859,23 @@ vector is constant:
 the standard `waterbird_complete95_forest2water2` release. It does not mean a
 separately regenerated dataset directory whose name contains `1.0`.
 
-For the standard release, map each metadata image filename to a CUB segmentation
-by preserving its class directory and relative stem and replacing the image
-suffix with `.png` beneath the source CUB segmentation root. Require exact image
-and mask width/height for every used row.
+For the standard release, map the complete dataset-relative `img_filename` to
+the VLM PNG using the exact producer-compatible flattening rule in the
+Authoritative VLM-Mask Correction. Do not preserve a nested class directory and
+do not map from row position or `img_id`. Require exact image and mask
+width/height for every required split-0/1 row.
 
 Path configuration distinguishes:
 
 ```yaml
-cub_source_segmentation_root: REQUIRED_ABSOLUTE_PATH
-cub_waterbirds_mask_root: REQUIRED_ABSOLUTE_PATH
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-If the relative-stem source mask matches Waterbirds coordinates exactly, the two
-paths may resolve to the same audited tree. If any dimensions or stems do not
-match, stop: a separate immutable Waterbirds-coordinate bank may be created only
-from recorded generation metadata and must receive its own manifest and hash.
+Preflight must reject producer-name collisions, missing or ambiguous required
+maps, mask reuse, dimensional mismatches, and invalid VOC content. It freezes
+the accepted one-to-one mapping in `preflight/mask_manifest.json` with schema
+`anchorcal-vlm-mask-manifest-v1` and a deterministic hash. Official split 2 is
+outside the mask-coverage contract.
 
 ---
 
@@ -2897,24 +3004,40 @@ data:
   release: waterbird_complete95_forest2water2
   waterbirds100_definition: "official-train rows with y == place"
   canonical_id: img_id
-  metadata: "<waterbirds_root>/metadata.csv"
-  masks: "official CUB-derived Waterbirds-coordinate masks"
-  cub_source_segmentation_root: "REQUIRED_ABSOLUTE_PATH"
-  cub_waterbirds_mask_root: "REQUIRED_ABSOLUTE_PATH"
-  source_mask_encodings:
-    - [0, 1]
-    - [0, 255]
   image_size: 224
   patch_size: 16
   interpolation: bicubic
   antialias: true
-  mask_interpolation: nearest
   normalization_mean: [0.5, 0.5, 0.5]
   normalization_std: [0.5, 0.5, 0.5]
   random_resized_crop:
     scale: [0.70, 1.00]
     ratio: [0.75, 1.3333333333]
   dilation_radius: 8
+
+masks:
+  source: openclip_laion_dinovit_weclipplus_prediction_cmap
+  mapping_mode: weclip_producer_first_with_explicit_legacy_fallbacks
+  mapping_version: weclip-img-filename-v1
+  decoder_version: pascal-voc-rgb-class-id-v1
+  manifest_schema: anchorcal-vlm-mask-manifest-v1
+  format: voc_colormap_class_ids
+  foreground_class_ids: [1]
+  allowed_class_ids: [0, 1]
+  interpolation: nearest
+  minimum_foreground_fraction: 0.0
+  maximum_foreground_fraction: 1.0
+  required_official_splits: [0, 1]
+  optional_official_splits: [2]
+  runtime_resolve_from_manifest_only: true
+
+paths:
+  repo_root: /home/ryreu/guided_cnn/BirdOnly
+  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+  hf_home: /home/ryreu/.cache/huggingface
+  output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 
 pretrained:
   model: "hf_hub:timm/vit_small_patch16_224.augreg_in21k_ft_in1k"
@@ -2976,9 +3099,6 @@ compute:
   login: tigris.rc.rit.edu
   partition: tigris
   gpu: "gpu:gh200:1"
-  repo_root: /home/ryreu/guided_cnn/BirdOnly
-  output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
-  hf_home: /home/ryreu/.cache/huggingface
   selector_storage: candidate_outputs.h5
   reporting_only_storage: exploratory_hidden_metrics.h5
   production_requires_clean_commit: true
@@ -2990,13 +3110,15 @@ compute:
 
 All methodological questions are resolved.
 
-Only these machine-specific absolute paths remain to be discovered and written into `configs/anchorcal/paths.local.yaml`:
+The established TIGRIS data paths written into
+`configs/anchorcal/paths.local.yaml` are:
 
 ```text
-waterbirds_root
-metadata_path
-cub_source_segmentation_root
-cub_waterbirds_mask_root
+waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-The implementation must not guess them. Once the preflight finds a unique valid path for each and the user confirms them, their resolved absolute values and hashes become part of every run manifest.
+Preflight must verify these exact roots rather than substitute similarly named
+Waterbirds-100, historical WeCLIP+, or CUB paths. Their resolved values and the
+immutable VLM mapping-manifest hash become part of every run manifest.

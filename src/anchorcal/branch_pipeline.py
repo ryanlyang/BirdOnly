@@ -32,6 +32,7 @@ from .precision import evaluation_inference
 from .seeds import seed_everything, seeded_worker_init
 from .training import UpdateScheduler, make_adamw
 from .transforms import check_fallback_rate
+from .vlm_masks import VlmMaskBank, load_vlm_mask_bank
 
 
 def _load_frame(output: Path, name: str) -> pd.DataFrame:
@@ -168,7 +169,8 @@ def _branch_restart_provenance(
         "data_identity": {
             "metadata_path": config["paths"]["metadata_path"],
             "waterbirds_root": config["paths"]["waterbirds_root"],
-            "mask_root": config["paths"]["cub_waterbirds_mask_root"],
+            "vlm_mask_root": config["paths"]["vlm_mask_root"],
+            "vlm_mask_contract": dict(config["masks"]),
             **data_files,
         },
         "model_identity": model_binding,
@@ -379,16 +381,20 @@ def evaluate_branch(
     config: dict[str, Any],
     branch: str,
     device,
+    *,
+    mask_bank: VlmMaskBank | None = None,
 ) -> dict[str, np.ndarray]:
     import torch
     from torch.utils.data import DataLoader
 
     output = Path(config["paths"]["output_root"])
     preprocessing = load_preprocessing_manifest(output)
+    if mask_bank is None:
+        mask_bank = load_vlm_mask_bank(config)
     dataset = EvaluationDataset(
         frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         preprocessing=preprocessing,
     )
     workers = int(config["optimization"]["num_workers"])
@@ -548,10 +554,11 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
         )
     model.to(device)
     train_frame = _load_frame(output, "expert_train")
+    mask_bank = load_vlm_mask_bank(config)
     dataset = BranchTrainingDataset(
         train_frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         branch=branch,
         run_seed=seed,
         token_budget=token_budget,
@@ -667,7 +674,12 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
         },
     )
     calibration = evaluate_branch(
-        model, _load_frame(output, "expert_calibration"), config, branch, device
+        model,
+        _load_frame(output, "expert_calibration"),
+        config,
+        branch,
+        device,
+        mask_bank=mask_bank,
     )
     calibration_valid = calibration["valid"]
     temperature = fit_temperature(
@@ -679,7 +691,14 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
         temperature.temperature,
     )
     calibration = _attach_calibrated_outputs(calibration, temperature.temperature)
-    biased = evaluate_branch(model, _load_frame(output, "biased_val"), config, branch, device)
+    biased = evaluate_branch(
+        model,
+        _load_frame(output, "biased_val"),
+        config,
+        branch,
+        device,
+        mask_bank=mask_bank,
+    )
     biased = _attach_calibrated_outputs(biased, temperature.temperature)
     valid = biased["valid"]
     correct = biased["logits"][valid].argmax(axis=1) == biased["labels"][valid]
@@ -697,7 +716,7 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
         branch_root, branch, history
     )
     manifest = {
-        "schema_version": "anchorcal-branch-manifest-v3",
+        "schema_version": "anchorcal-branch-manifest-v4",
         "branch": branch,
         "fixed_epoch": epochs,
         "checkpoint": str(checkpoint.resolve()),
@@ -731,6 +750,9 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
         "metadata_path": config["paths"]["metadata_path"],
         "metadata_sha256": preflight_report["metadata_sha256"],
         "mask_bank_sha256": preflight_report["mask_bank_sha256"],
+        "mask_manifest_sha256": preflight_report["mask_manifest_sha256"],
+        "mask_source": preflight_report["mask_source"],
+        "mask_contract": dict(config["masks"]),
         "preprocessing_manifest_sha256": preflight_report["preprocessing"][
             "manifest_sha256"
         ],

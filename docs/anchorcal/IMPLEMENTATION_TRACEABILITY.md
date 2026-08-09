@@ -11,7 +11,7 @@ that real Waterbirds data or a TIGRIS GH200 has been exercised locally.
 | Requirement / decision locks | Implementation | Focused verification | Runtime evidence |
 |---|---|---|---|
 | Independent package, strict resolved configuration, local path overlay, and no legacy SETV selector/expert imports (85-89) | `src/anchorcal/config.py`, `src/anchorcal/paths.py`, `configs/anchorcal/*.yaml`, `scripts/anchorcal/_common.py` | `test_data_scientific_core.py`; import scans in the final audit | `preflight/resolved_config.yaml`, `preflight/report.json`, frozen campaign `pilot.yaml` and `paths.local.yaml` |
-| Exact release, strict metadata schema/hash/contained filenames, canonical sorted `img_id`, authoritative mapped CUB masks, binary encodings, dimensions, uniqueness, and mapping provenance (1-6, 108) | `src/anchorcal/data.py`, `src/anchorcal/masks.py`, `src/anchorcal/preflight.py`, `scripts/anchorcal/discover_paths.py` | `test_data_scientific_core.py`, `test_preflight_path_contracts.py` | `preflight/mask_manifest.json`, `preflight/report.json` |
+| Exact Waterbirds-95 release, strict metadata schema/hash/contained filenames, canonical sorted `img_id`, exact VLM95 root, producer-first complete-`img_filename` join, strict VOC class-1 decode, dimensions and one-to-one uniqueness, required split-0/1 coverage with no split-2 mask requirement, and immutable mapping provenance (1-6, 89, 108 and the authoritative VLM correction) | `src/anchorcal/data.py`, `src/anchorcal/vlm_masks.py`, `src/anchorcal/preflight.py`, `scripts/anchorcal/discover_paths.py` | `test_data_scientific_core.py`, `test_preflight_path_contracts.py` | `preflight/mask_manifest.json` (`anchorcal-vlm-mask-manifest-v1` plus content hash), `preflight/report.json` |
 | Deterministic aligned Waterbirds100, nested expert, oracle-validation, and official-test split persistence (7, 11-13) | `src/anchorcal/splits.py` | `test_data_scientific_core.py` | `splits/waterbirds100_*.csv`, `splits/manifest.json` |
 | Pinned ViT-S/16 repository/revision/safetensors hash, timm version, package/runtime and clean-commit locks (14, 87-90, 97, 111-112) | `src/anchorcal/pretrained.py`, `src/anchorcal/runtime.py`, `src/anchorcal/preflight.py`, `slurm/anchorcal/runtime_common.sh` | config/pretrained boundary assertions in `test_data_scientific_core.py`; production preflight is the real-cache/GH200 gate | `preflight/pretrained_manifest.json`, `environment/{environment.json,package-lock.txt}`, campaign environment/frozen-input receipts |
 | Stateless cryptographic seeds, exact timm preprocessing/parity, exact joint geometry, source-resolution green screen, interpolation, bounded crop fallback, final-grid dilation, and strict patch purity (5-10, 93-94, 99) | `src/anchorcal/preprocessing.py`, `src/anchorcal/seeds.py`, `src/anchorcal/transforms.py`, `src/anchorcal/masks.py`, `src/anchorcal/datasets.py` | `test_preprocessing.py`, `test_transforms.py`, `test_data_scientific_core.py` | `preflight/preprocessing_manifest.json`, `preflight/geometry/*_geometry.csv`, `preflight/geometry/manifest.json`, branch histories/manifests |
@@ -58,5 +58,8 @@ specific rows whose earlier behavior they override.
   the reporting reader/module is imported.
 - `Waterbirds100` means the aligned (`y == place`) subset of the official
   Waterbirds training split; it is not a different release directory.
-- Dataset and CUB-mask absolute paths remain machine-local and explicit.
-  Discovery lists candidates but never resolves ambiguity automatically.
+- The authoritative masks are the fixed Waterbirds-95 VLM bank at
+  `/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap`.
+  Discovery reports only matching root candidates and never substitutes one;
+  preflight verifies the producer-first mapping and rejects ambiguity.
+  Official split 2 is never a mask-coverage gate.

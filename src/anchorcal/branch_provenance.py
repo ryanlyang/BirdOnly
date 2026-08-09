@@ -62,6 +62,7 @@ def verify_branch_artifacts(
     preflight_path = output / "preflight" / "report.json"
     preflight = _load_json(preflight_path, "preflight report")
     preprocessing_path = output / "preflight" / "preprocessing_manifest.json"
+    mask_manifest_path = output / "preflight" / "mask_manifest.json"
     checkpoint_path = root / "epoch_final.pt"
     calibration_path = root / "expert_calibration_outputs.npz"
     biased_path = root / "biased_val_outputs.npz"
@@ -83,7 +84,7 @@ def verify_branch_artifacts(
         else None
     )
     if (
-        manifest.get("schema_version") != "anchorcal-branch-manifest-v3"
+        manifest.get("schema_version") != "anchorcal-branch-manifest-v4"
         or manifest.get("branch") != branch
         or int(manifest.get("fixed_epoch", -1))
         != int(config["branches"]["frozen_epoch"])
@@ -97,6 +98,13 @@ def verify_branch_artifacts(
         or manifest.get("preflight_report_sha256") != sha256_file(preflight_path)
         or manifest.get("metadata_sha256") != preflight.get("metadata_sha256")
         or manifest.get("mask_bank_sha256") != preflight.get("mask_bank_sha256")
+        or manifest.get("mask_manifest_sha256")
+        != preflight.get("mask_manifest_sha256")
+        or manifest.get("mask_source") != preflight.get("mask_source")
+        or manifest.get("mask_contract") != config.get("masks")
+        or not mask_manifest_path.is_file()
+        or preflight.get("mask_manifest_sha256")
+        != sha256_file(mask_manifest_path)
         or manifest.get("git_commit") != preflight.get("git", {}).get("commit")
         or not preprocessing_path.is_file()
         or manifest.get("preprocessing_manifest_sha256")

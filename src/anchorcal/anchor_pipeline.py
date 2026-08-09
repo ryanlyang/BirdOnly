@@ -32,7 +32,7 @@ from .competence import (
     true_margin,
 )
 from .criteria import build_scores
-from .data import image_path, mask_path
+from .data import image_path
 from .datasets import EvaluationDataset
 from .decision import choose_criterion, write_decision_receipt
 from .errors import AuditFailure, PreflightError
@@ -42,7 +42,7 @@ from .interventions import (
 )
 from .io import atomic_write_json, atomic_write_text, hash_object, sha256_file
 from .metrics import HARMONIC_EPSILON
-from .masks import dilate_mask, load_binary_mask, mask_geometry, patch_fractions
+from .masks import dilate_mask, mask_geometry, patch_fractions
 from .models.anchor import centered_logits, mix_anchor_logits
 from .models.branches import BackgroundBranch, ForegroundBranch, assert_independent_branches
 from .pretrained import create_pretrained_vit
@@ -64,6 +64,7 @@ from .transforms import (
     mask_normalized_background_blur,
     normalize_image,
 )
+from .vlm_masks import VlmMaskBank, load_vlm_mask_bank
 
 
 def _load_branch_models(config: dict[str, Any], device):
@@ -161,7 +162,13 @@ def _view_lookup(config: dict[str, Any]) -> dict[int, np.ndarray]:
     }
 
 
-def _foreground_invariance_audit(model, frame: pd.DataFrame, config, device) -> dict[str, Any]:
+def _foreground_invariance_audit(
+    model,
+    frame: pd.DataFrame,
+    config,
+    device,
+    mask_bank: VlmMaskBank,
+) -> dict[str, Any]:
     import torch
 
     preprocessing = load_preprocessing_manifest(config["paths"]["output_root"])
@@ -170,7 +177,6 @@ def _foreground_invariance_audit(model, frame: pd.DataFrame, config, device) -> 
         "resize_shortest": preprocessing.effective_resize_shortest,
     }
     image_root = Path(config["paths"]["waterbirds_root"])
-    mask_root = Path(config["paths"]["cub_waterbirds_mask_root"])
     count = min(100, len(frame))
     selected = np.sort(
         stateless_rng(7001, "foreground_invariance_samples").choice(
@@ -188,7 +194,7 @@ def _foreground_invariance_audit(model, frame: pd.DataFrame, config, device) -> 
         row = frame.iloc[index]
         with Image.open(image_path(image_root, str(row.img_filename))) as opened:
             image = opened.convert("RGB")
-        mask = load_binary_mask(mask_path(mask_root, str(row.img_filename)))
+        mask = mask_bank.load(int(row.img_id), str(row.img_filename))
         first = foreground_eval_transform(image, mask, **eval_options)
         first_image = torch.from_numpy(
             normalize_image(first.image, mean=preprocessing.mean, std=preprocessing.std)
@@ -268,7 +274,9 @@ def _foreground_invariance_audit(model, frame: pd.DataFrame, config, device) -> 
     }
 
 
-def _background_purity_audit(config: dict[str, Any]) -> dict[str, Any]:
+def _background_purity_audit(
+    config: dict[str, Any], mask_bank: VlmMaskBank | None = None
+) -> dict[str, Any]:
     """Independently prove every retained fixed-view patch is background-only.
 
     This deliberately does not trust the geometry CSV's stored eligibility
@@ -284,7 +292,8 @@ def _background_purity_audit(config: dict[str, Any]) -> dict[str, Any]:
     bank = load_view_bank(artifact_root / "fixed_background_views.h5")
     preprocessing = load_preprocessing_manifest(output)
     image_root = Path(config["paths"]["waterbirds_root"])
-    mask_root = Path(config["paths"]["cub_waterbirds_mask_root"])
+    if mask_bank is None:
+        mask_bank = load_vlm_mask_bank(config)
     dilation_radius = int(config["data"]["dilation_radius"])
     patch_size = PATCH_SIZE
     expected_dilation_hash = hash_object(
@@ -354,7 +363,7 @@ def _background_purity_audit(config: dict[str, Any]) -> dict[str, Any]:
         row = records[img_id]
         with Image.open(image_path(image_root, str(row.img_filename))) as opened:
             image = opened.convert("RGB")
-        raw_mask = load_binary_mask(mask_path(mask_root, str(row.img_filename)))
+        raw_mask = mask_bank.load(img_id, str(row.img_filename))
         transformed = deterministic_eval_transform(
             image,
             raw_mask,
@@ -489,15 +498,18 @@ def _geometry_audit_seeds(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _geometry_audit(frame: pd.DataFrame, config: dict[str, Any]) -> dict[str, Any]:
+def _geometry_audit(
+    frame: pd.DataFrame,
+    config: dict[str, Any],
+    mask_bank: VlmMaskBank,
+) -> dict[str, Any]:
     preprocessing = load_preprocessing_manifest(config["paths"]["output_root"])
     image_root = Path(config["paths"]["waterbirds_root"])
-    mask_root = Path(config["paths"]["cub_waterbirds_mask_root"])
     features = []
     for row in frame.itertuples(index=False):
         with Image.open(image_path(image_root, str(row.img_filename))) as opened:
             image = opened.convert("RGB")
-        mask = load_binary_mask(mask_path(mask_root, str(row.img_filename)))
+        mask = mask_bank.load(int(row.img_id), str(row.img_filename))
         transformed = deterministic_eval_transform(
             image,
             mask,
@@ -538,7 +550,13 @@ def _geometry_audit(frame: pd.DataFrame, config: dict[str, Any]) -> dict[str, An
     }
 
 
-def _random_token_audit(background, biased_frame, config, device) -> dict[str, Any]:
+def _random_token_audit(
+    background,
+    biased_frame,
+    config,
+    device,
+    mask_bank: VlmMaskBank,
+) -> dict[str, Any]:
     import torch
 
     output = Path(config["paths"]["output_root"])
@@ -547,7 +565,7 @@ def _random_token_audit(background, biased_frame, config, device) -> dict[str, A
     expert_dataset = EvaluationDataset(
         expert_frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         preprocessing=preprocessing,
     )
     pools: dict[int, list[torch.Tensor]] = {0: [], 1: []}
@@ -599,14 +617,23 @@ def _random_token_audit(background, biased_frame, config, device) -> dict[str, A
     return {**interval.__dict__, "recipient_count": int(len(labels)), "source_patches_per_class": int(count)}
 
 
-def run_branch_audits(foreground, background, frame, config, device) -> dict[str, Any]:
+def run_branch_audits(
+    foreground,
+    background,
+    frame,
+    config,
+    device,
+    mask_bank: VlmMaskBank,
+) -> dict[str, Any]:
     report = {
         "foreground_invariance": _foreground_invariance_audit(
-            foreground, frame, config, device
+            foreground, frame, config, device, mask_bank
         ),
-        "background_purity": _background_purity_audit(config),
-        "random_token": _random_token_audit(background, frame, config, device),
-        "geometry_diagnostic": _geometry_audit(frame, config),
+        "background_purity": _background_purity_audit(config, mask_bank),
+        "random_token": _random_token_audit(
+            background, frame, config, device, mask_bank
+        ),
+        "geometry_diagnostic": _geometry_audit(frame, config, mask_bank),
     }
     output = Path(config["paths"]["output_root"])
     namespace = "debug/audits" if config["runtime"]["debug"] else "audits"
@@ -830,11 +857,14 @@ def evaluate_anchor_ladder(config: dict[str, Any]) -> dict[str, Any]:
         )
     ):
         raise PreflightError("anchor config/path provenance differs from preflight")
+    mask_bank = load_vlm_mask_bank(config)
     foreground, background, foreground_checkpoint, background_checkpoint = _load_branch_models(
         config, device
     )
     biased_frame = pd.read_csv(output / "splits" / "waterbirds100_biased_val.csv")
-    run_branch_audits(foreground, background, biased_frame, config, device)
+    run_branch_audits(
+        foreground, background, biased_frame, config, device, mask_bank
+    )
     joined = _join_branch_outputs(_load_outputs(config, "foreground"), _load_outputs(config, "background"))
     competence = construct_competence_intersection(
         joined["img_id"],
@@ -958,7 +988,7 @@ def evaluate_anchor_ladder(config: dict[str, Any]) -> dict[str, Any]:
     dataset = EvaluationDataset(
         subset_frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         preprocessing=preprocessing,
     )
     views = _view_lookup(config)
@@ -1546,6 +1576,9 @@ def evaluate_anchor_ladder(config: dict[str, Any]) -> dict[str, Any]:
             "preflight_report_sha256": sha256_file(preflight_path),
             "metadata_sha256": preflight_report["metadata_sha256"],
             "mask_bank_sha256": preflight_report["mask_bank_sha256"],
+            "mask_manifest_sha256": preflight_report["mask_manifest_sha256"],
+            "mask_source": preflight_report["mask_source"],
+            "mask_contract": dict(config["masks"]),
             "preprocessing_manifest_sha256": preflight_report["preprocessing"][
                 "manifest_sha256"
             ],

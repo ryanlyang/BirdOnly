@@ -10,6 +10,10 @@ import numpy as np
 import pandas as pd
 
 from .anchor_artifacts import verify_anchor_artifacts
+from .candidate_provenance import (
+    load_candidate_preflight_binding,
+    require_candidate_run_manifest,
+)
 from .candidate_schema import CANDIDATE_SCALAR_METRICS, candidate_per_example_shapes
 from .decision import verify_decision_receipt
 from .errors import AuditFailure, PreflightError
@@ -98,6 +102,7 @@ def run_selector_stage(config: dict[str, Any]) -> dict[str, Any]:
     ):
         raise PreflightError("AnchorCal decision receipt is not bound to this config")
     verify_anchor_artifacts(config, decision_receipt=anchor_receipts[0])
+    preflight = load_candidate_preflight_binding(config)
     candidate_root = output / ("debug/candidates" if debug else "candidates")
     expected_grid = {
         _run_id(float(learning_rate), float(weight_decay), int(config["candidate_grid"]["seed"])): (
@@ -138,23 +143,24 @@ def run_selector_stage(config: dict[str, Any]) -> dict[str, Any]:
     for run_dir in run_dirs:
         manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
         expected_lr, expected_wd = expected_grid[run_dir.name]
+        try:
+            require_candidate_run_manifest(
+                manifest,
+                config,
+                preflight,
+                expected_run_id=run_dir.name,
+                expected_decision_sha256=sha256_file(anchor_receipts[0]),
+            )
+        except PreflightError as error:
+            raise AuditFailure(str(error)) from error
         if (
-            manifest.get("run_id") != run_dir.name
-            or float(manifest.get("learning_rate", -1)) != expected_lr
+            float(manifest.get("learning_rate", -1)) != expected_lr
             or float(manifest.get("weight_decay", -1)) != expected_wd
             or int(manifest.get("seed", -1)) != int(config["candidate_grid"]["seed"])
-            or manifest.get("resolved_config_sha256") != config["resolved_config_sha256"]
-            or manifest.get("decision_receipt_sha256") != sha256_file(anchor_receipts[0])
             or Path(manifest.get("decision_receipt", "")).resolve()
             != anchor_receipts[0].resolve()
         ):
             raise AuditFailure(f"candidate run provenance mismatch: {run_dir.name}")
-        preflight_path = Path(manifest.get("preflight_report", ""))
-        if (
-            not preflight_path.is_file()
-            or sha256_file(preflight_path) != manifest.get("preflight_report_sha256")
-        ):
-            raise AuditFailure(f"candidate preflight provenance is invalid: {run_dir.name}")
         completion_path = run_dir / "completion.json"
         if not completion_path.is_file():
             raise AuditFailure(f"candidate completion/checkpoint receipt is missing: {run_dir.name}")

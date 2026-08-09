@@ -33,22 +33,23 @@ cp configs/anchorcal/paths.local.example.yaml \
   configs/anchorcal/paths.local.yaml
 ```
 
-Fill all four dataset/mask-specific entries with verified absolute paths. Do
-not leave `REQUIRED_ABSOLUTE_PATH` and do not guess between multiple candidates.
-The fixed entries must remain:
+Verify the three established dataset/mask entries. Do not leave
+`REQUIRED_ABSOLUTE_PATH` and do not substitute the separately regenerated
+Waterbirds-100 dataset, a CUB segmentation tree, or a historical WeCLIP+ output
+whose filenames happen to match. The fixed entries are:
 
 ```yaml
 paths:
   repo_root: /home/ryreu/guided_cnn/BirdOnly
-  waterbirds_root: <verified waterbird_complete95_forest2water2 root>
-  metadata_path: <that exact root>/metadata.csv
-  cub_source_segmentation_root: <verified source CUB segmentation root>
-  cub_waterbirds_mask_root: <verified Waterbirds-coordinate mask root>
+  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 ```
 
-If the locations are uncertain, print candidates without selecting one:
+The discovery command is a read-only verification aid. It may print other
+candidates, but it must never select or substitute one automatically:
 
 ```bash
 PYTHONNOUSERSITE=1 \
@@ -57,10 +58,25 @@ PYTHONPATH=/home/ryreu/guided_cnn/BirdOnly/src \
   scripts/anchorcal/discover_paths.py /home/ryreu/guided_cnn
 ```
 
-The production preflight performs the authoritative release, metadata,
-one-mask-per-image, encoding, relative-stem, dimension, split, pretrained-hash,
-package, architecture, and GH200 checks. A failed preflight prevents every
-downstream stage.
+The production preflight validates the authoritative release and metadata, then
+maps each required row from the complete dataset-relative `img_filename` using
+the exact `generate_pseudo_masks_waterbirds._make_image_id` flattening rule.
+It tries the producer name first, fails on collisions, reuse, missing or
+ambiguous mappings, and strictly decodes categorical Pascal/VOC class ID 1
+(RGB `[128, 0, 0]`) rather than thresholding a white binary mask. Complete
+coverage is required for official splits 0 and 1 only. Official split 2 has no
+mask requirement, and test classification must not load masks.
+
+The accepted mapping is frozen in `preflight/mask_manifest.json` with schema
+`anchorcal-vlm-mask-manifest-v1`. The manifest includes the exact VLM root,
+metadata hash, locked producer identifier, mapping and decoder implementation
+versions, canonical per-row mapping, dimensions, decoded class/color counts,
+file sizes, per-mask SHA-256 values, split coverage, collision and extras
+reports, and a deterministic content hash. It records the AnchorCal checkout
+revision but does not claim an unknown external GALS producer-source revision.
+Every downstream job verifies the frozen hashes. Preflight also performs the
+pretrained-hash, package, architecture, and GH200 checks. A failed preflight
+prevents every downstream stage.
 
 ## 2. Submit the campaign
 
@@ -148,6 +164,7 @@ Important checkpoints in the graph are:
 
 ```text
 preflight/report.json
+preflight/mask_manifest.json
 preflight/preflight_artifacts.sha256
 preflight/preprocessing_manifest.json
 environment/environment.json
@@ -252,4 +269,5 @@ readable double check. Then inspect
 `analysis/summary.json`, tables, and figures together with the hashed decision
 and candidate-selection receipts. Copy the whole campaign root when collecting
 results; retaining only the final table would discard the configuration,
-environment, split, mask, and chronology evidence needed to audit the pilot.
+environment, split, immutable VLM mapping/hash evidence, and chronology needed
+to audit the pilot.

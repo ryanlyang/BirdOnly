@@ -14,15 +14,15 @@ from .background import (
     persist_view_bank,
     select_token_budget,
 )
-from .data import image_path, mask_path
+from .data import image_path
 from .errors import AuditFailure
 from .interventions import assign_candidate_donor_patches, assign_donors
 from .io import atomic_write_json, hash_object
-from .masks import load_binary_mask
 from .paths import geometry_artifact_root
 from .preprocessing import EvaluationPreprocessing, load_preprocessing_manifest
 from .seeds import stateless_rng
 from .transforms import criterion_patch_eligibility, deterministic_eval_transform
+from .vlm_masks import VlmMaskBank, load_vlm_mask_bank
 from PIL import Image
 
 
@@ -36,7 +36,7 @@ def _read_split(root: Path, name: str) -> pd.DataFrame:
 def geometry_table(
     frame: pd.DataFrame,
     image_root: Path,
-    mask_root: Path,
+    mask_bank: VlmMaskBank,
     preprocessing: EvaluationPreprocessing,
 ) -> tuple[pd.DataFrame, dict[int, np.ndarray]]:
     rows: list[dict[str, Any]] = []
@@ -44,7 +44,7 @@ def geometry_table(
     for row in frame.itertuples(index=False):
         with Image.open(image_path(image_root, str(row.img_filename))) as opened:
             image = opened.convert("RGB")
-        mask = load_binary_mask(mask_path(mask_root, str(row.img_filename)))
+        mask = mask_bank.load(int(row.img_id), str(row.img_filename))
         transformed = deterministic_eval_transform(
             image,
             mask,
@@ -102,7 +102,7 @@ def prepare_geometry_artifacts(
     artifact_root = geometry_artifact_root(config)
     artifact_root.mkdir(parents=True, exist_ok=True)
     image_root = Path(config["paths"]["waterbirds_root"])
-    mask_root = Path(config["paths"]["cub_waterbirds_mask_root"])
+    mask_bank = load_vlm_mask_bank(config)
     frames = {
         name: _read_split(splits_root, name)
         for name in ("expert_train", "expert_calibration", "biased_val")
@@ -111,7 +111,7 @@ def prepare_geometry_artifacts(
     backgrounds: dict[str, dict[int, np.ndarray]] = {}
     for name, frame in frames.items():
         tables[name], backgrounds[name] = geometry_table(
-            frame, image_root, mask_root, preprocessing
+            frame, image_root, mask_bank, preprocessing
         )
         tables[name].to_csv(artifact_root / f"{name}_geometry.csv", index=False)
     decision = select_token_budget(

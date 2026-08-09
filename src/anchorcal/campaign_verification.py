@@ -20,6 +20,7 @@ from .provenance import verify_hashed_receipt
 from .paths import geometry_artifact_root
 from .selector_storage import SELECTOR_FILENAME, SelectorVisibleReader
 from .storage import HIDDEN_FILENAME, verify_candidate_storage
+from .vlm_masks import VLM_PRODUCER, load_vlm_mask_bank
 
 
 REQUIRED_PREFLIGHT_BUNDLE_MEMBERS = frozenset(
@@ -126,6 +127,14 @@ def verify_campaign_artifacts(config: dict[str, Any]) -> dict[str, Any]:
 
     preflight = _json(output / "preflight" / "report.json")
     _require(preflight.get("status") == "passed", "preflight did not pass")
+    vlm_bank = load_vlm_mask_bank(config)
+    _require(
+        preflight.get("mask_source") == VLM_PRODUCER
+        and preflight.get("mask_bank_sha256") == vlm_bank.mask_bank_sha256
+        and preflight.get("mask_manifest_sha256")
+        == sha256_file(output / "preflight" / "mask_manifest.json"),
+        "preflight VLM-mask provenance is incompatible",
+    )
     if not debug:
         _require(
             preflight.get("schema_version") == "anchorcal-preflight-v1",
@@ -239,11 +248,18 @@ def verify_campaign_artifacts(config: dict[str, Any]) -> dict[str, Any]:
             required_hidden_selectors=("oracle",),
         )
         _require(
-            run_manifest.get("run_id") == run_id
+            run_manifest.get("schema_version") == "anchorcal-candidate-run-v3"
+            and run_manifest.get("run_id") == run_id
             and float(run_manifest.get("learning_rate", -1)) == learning_rate
             and float(run_manifest.get("weight_decay", -1)) == weight_decay
             and int(run_manifest.get("seed", -1)) == seed
-            and run_manifest.get("resolved_config_sha256") == config_hash,
+            and run_manifest.get("resolved_config_sha256") == config_hash
+            and run_manifest.get("mask_bank_sha256")
+            == preflight.get("mask_bank_sha256")
+            and run_manifest.get("mask_manifest_sha256")
+            == preflight.get("mask_manifest_sha256")
+            and run_manifest.get("mask_source") == preflight.get("mask_source")
+            and run_manifest.get("mask_contract") == config.get("masks"),
             f"candidate run provenance mismatch: {run_id}",
         )
         _require(

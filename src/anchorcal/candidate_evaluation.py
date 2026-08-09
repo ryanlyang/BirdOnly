@@ -23,6 +23,7 @@ from .precision import evaluation_inference, saliency_evaluation
 from .preprocessing import load_preprocessing_manifest
 from .saliency import image_alignment, signed_gradient_activation
 from .transforms import mask_normalized_background_blur, normalize_image
+from .vlm_masks import VlmMaskBank, load_vlm_mask_bank
 
 
 def evaluate_plain(
@@ -109,6 +110,8 @@ def evaluate_practical_criteria(
     biased_frame: pd.DataFrame,
     config: dict[str, Any],
     device,
+    *,
+    mask_bank: VlmMaskBank | None = None,
 ) -> dict[str, Any]:
     """Evaluate the fixed full biased set and fixed expensive subset."""
 
@@ -119,6 +122,8 @@ def evaluate_practical_criteria(
     )
     output = Path(config["paths"]["output_root"])
     preprocessing = load_preprocessing_manifest(output)
+    if mask_bank is None:
+        mask_bank = load_vlm_mask_bank(config)
     selector_table = pd.read_csv(
         geometry_artifact_root(config) / "selector_eval_subset.csv"
     )
@@ -129,7 +134,7 @@ def evaluate_practical_criteria(
     subset_dataset = EvaluationDataset(
         subset_frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         preprocessing=preprocessing,
     )
     # Donors can include common-eligible biased images outside the capped subset.
@@ -139,7 +144,7 @@ def evaluate_practical_criteria(
     all_dataset = EvaluationDataset(
         ordered_biased_frame,
         config["paths"]["waterbirds_root"],
-        config["paths"]["cub_waterbirds_mask_root"],
+        mask_bank,
         preprocessing=preprocessing,
     )
     all_index = {
