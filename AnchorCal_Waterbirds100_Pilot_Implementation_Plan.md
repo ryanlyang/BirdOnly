@@ -132,8 +132,9 @@ The official balanced Waterbirds validation split, scored using worst-group accu
 ## 3.1 Included
 
 - Waterbirds100 only.
-- The fixed, audited Waterbirds-95 VLM bird-mask bank specified in Section 5.1.
-- Official Waterbirds training images filtered to aligned groups only.
+- The fixed, audited Waterbirds-100 VLM bird-mask bank specified in Section 5.1.
+- The complete official Waterbirds-100 training split, hard-asserted to contain
+  only aligned groups.
 - A custom fully correlated validation split drawn from those aligned training images.
 - Official Waterbirds validation as a group-aware oracle.
 - Official Waterbirds test for exploratory post-hoc analysis.
@@ -196,9 +197,19 @@ The pilot should remain narrow enough that failure or success can be interpreted
 
 ## 4.1 Waterbirds100 source pool
 
-Start from the official Waterbirds **training split**.
+Start from official split 0 of the dedicated Waterbirds-100 release:
 
-Waterbirds100 for this pilot means retaining only shortcut-aligned examples:
+```text
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
+```
+
+with authoritative metadata:
+
+```text
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
+```
+
+The complete source training split must already satisfy:
 
 \[
 y_i = s_i,
@@ -214,12 +225,14 @@ For binary Waterbirds:
 - waterbird on water;
 - landbird on land.
 
-Remove all official-training rows corresponding to:
+No official-training row may correspond to:
 
 - waterbird on land;
 - landbird on water.
 
-Call the remaining aligned pool:
+Hard-fail preflight if any split-0 row violates `y == place`; do not silently
+filter a partially biased release into an aligned subset. Call the complete,
+validated split-0 pool:
 
 ```text
 waterbirds100_development_pool
@@ -227,12 +240,13 @@ waterbirds100_development_pool
 
 ## 4.2 Custom training and biased-validation split
 
-Split the aligned development pool into:
+Split the complete validated development pool into:
 
 - `candidate_train`: 80 percent;
 - `biased_val`: 20 percent.
 
-Stratify by bird class. Because every retained example is aligned, both resulting splits remain 100 percent spuriously correlated.
+Stratify by bird class. Because every source example is asserted aligned, both
+resulting splits remain 100 percent spuriously correlated.
 
 Use one fixed split seed:
 
@@ -246,6 +260,11 @@ Save exact sample IDs:
 splits/waterbirds100_candidate_train.csv
 splits/waterbirds100_biased_val.csv
 ```
+
+Persist the complete split contract in `splits/manifest.json` with schema
+`anchorcal-splits-v3`. It must bind the dedicated release and metadata hash,
+the complete official split-0 membership and `y == place` audit, every derived
+CSV hash, and the untouched official split-1 and split-2 memberships.
 
 Log:
 
@@ -265,7 +284,7 @@ up to metadata integrity.
 
 ## 4.3 Oracle validation
 
-Use the official Waterbirds validation split unchanged.
+Use official split 1 from the dedicated Waterbirds-100 release unchanged.
 
 This split is the **oracle validation set**.
 
@@ -295,7 +314,7 @@ The oracle split must never be used to:
 
 ## 4.4 Test split
 
-Use the official Waterbirds test split unchanged.
+Use official split 2 from the dedicated Waterbirds-100 release unchanged.
 
 For this exploratory pilot, it is acceptable to compute test metrics after every epoch.
 
@@ -335,19 +354,18 @@ The foreground and background branches train on `expert_train` and calibrate on 
 
 ## 5.1 Mask assumptions
 
-The authoritative mask input is the fixed OpenCLIP-LAION + DINOvIT WeCLIP+
-`prediction_cmap` bank at:
+The authoritative mask input is the matching fixed OpenCLIP-LAION + DINOvIT
+WeCLIP+ `prediction_cmap` bank at:
 
 ```text
-/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
 This is an audited VLM teacher-map bank, not an official CUB ground-truth
 segmentation bank. Do not mix it with CUB segmentations, historical WeCLIP+
-outputs, or the separately generated `results_waterbirds100_*` bank. The name
-`Waterbirds100` in this pilot continues to mean the `y == place` subset of the
-standard Waterbirds-95 release defined in Section 4.1; it does not select a
-different dataset release or mask bank.
+outputs, or the Waterbirds-95 `results_waterbirds95_*` bank. `Waterbirds100` in
+this pilot means the dedicated `waterbird_1.0_forest2water2` release defined in
+Section 4.1, paired only with this matching Waterbirds-100 mask bank.
 
 Resolve a mask from the metadata row's complete dataset-relative
 `img_filename`. Reproduce the producer's
@@ -377,10 +395,11 @@ generated test maps, may be inventoried but do not change the contract.
 
 Before any training, write the immutable VLM mapping manifest
 `preflight/mask_manifest.json`, with schema
-`anchorcal-vlm-mask-manifest-v1`, sorted by canonical `img_id`. It must bind the
-resolved dataset, metadata hash, exact VLM root, the locked producer identifier,
-mapping and decoder implementation versions, map format, required splits, and
-the AnchorCal configuration or checkout revision. It does not claim an unknown
+`anchorcal-vlm-mask-manifest-v2`, sorted by canonical `img_id`. It must bind the
+resolved dataset, metadata hash, exact VLM root, the locked source identifier
+`waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`, mapping and
+decoder implementation versions, map format, required splits, and the
+AnchorCal configuration or checkout revision. It does not claim an unknown
 external GALS producer-source revision. For each required row it records at
 least `img_id`,
 `img_filename`, official split, producer-derived name, resolved mask path,
@@ -958,7 +977,8 @@ Required warning:
 warn if any class has fewer than 50 intersection examples
 ```
 
-For binary Waterbirds100, the subset is expected to be large enough.
+For binary Waterbirds100, the official-training pool is expected to be large
+enough.
 
 ---
 
@@ -2578,14 +2598,25 @@ The core pilot is not supported if:
 
 # 28. Locked Default Configuration
 
+The corrected implementation package is version `0.4.0`, and this configuration
+uses schema `anchorcal-config-v2`.
+
 ```yaml
+schema_version: anchorcal-config-v2
+
 dataset:
   name: waterbirds100
+  release: waterbird_1.0_forest2water2
+  split_manifest_schema: anchorcal-splits-v3
   train_fraction: 0.80
   biased_val_fraction: 0.20
   split_seed: 1729
   image_size: 224
   patch_size: 16
+
+masks:
+  source: waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap
+  manifest_schema: anchorcal-vlm-mask-manifest-v2
 
 foreground_branch:
   architecture: region_vit

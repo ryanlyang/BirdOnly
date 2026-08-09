@@ -16,6 +16,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from anchorcal.data import image_path  # noqa: E402
 from anchorcal.errors import PreflightError  # noqa: E402
 from anchorcal.io import atomic_write_json, sha256_file  # noqa: E402
 from anchorcal.paths import discover_candidates  # noqa: E402
@@ -38,7 +39,7 @@ from anchorcal.vlm_masks import (  # noqa: E402
 class PreflightPathContractTests(unittest.TestCase):
     """Exercise the authoritative producer join without model/GPU preflight."""
 
-    RELEASE = "waterbird_complete95_forest2water2"
+    RELEASE = "waterbird_1.0_forest2water2"
     TRAIN_IMAGE = (
         "001.Black_footed_Albatross/"
         "Black_Footed_Albatross_0001_796111.jpg"
@@ -274,6 +275,7 @@ class PreflightPathContractTests(unittest.TestCase):
         collision_rows = [
             (1, "class.a/bird.jpg", 0, 0, 0),
             (2, "class_a/bird.jpg", 1, 1, 1),
+            (3, "test/bird.jpg", 0, 1, 2),
         ]
         self._write_metadata(collision_rows)
         for _, filename, *_ in collision_rows:
@@ -366,6 +368,63 @@ class PreflightPathContractTests(unittest.TestCase):
                 metadata_sha256=metadata_hash,
             )
 
+    def test_images_subdirectory_layout_is_supported(self) -> None:
+        source = self.release_root / self.TRAIN_IMAGE
+        nested = self.release_root / "images" / self.TRAIN_IMAGE
+        nested.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(nested)
+
+        config = self._config()
+        frame, metadata_hash = validate_release(config)
+        manifest = validate_images_and_masks(
+            config,
+            frame,
+            metadata_sha256=metadata_hash,
+        )
+        train_entry = next(
+            entry for entry in manifest["entries"] if entry["img_id"] == 17
+        )
+        self.assertEqual(train_entry["image_width"], 16)
+        self.assertEqual(train_entry["image_height"], 12)
+
+    def test_image_resolution_is_prioritized_deduplicated_and_fail_closed(
+        self,
+    ) -> None:
+        direct = (self.release_root / self.TRAIN_IMAGE).resolve()
+        nested = self.release_root / "images" / self.TRAIN_IMAGE
+        self.assertEqual(image_path(self.release_root, self.TRAIN_IMAGE), direct)
+
+        nested.parent.mkdir(parents=True, exist_ok=True)
+        nested.symlink_to(direct)
+        # Two layout candidates that resolve to the same source file are one
+        # unambiguous image, not a false-positive duplicate.
+        self.assertEqual(image_path(self.release_root, self.TRAIN_IMAGE), direct)
+
+        nested.unlink()
+        self._write_image(nested)
+        with self.assertRaisesRegex(PreflightError, "ambiguous Waterbirds image"):
+            image_path(self.release_root, self.TRAIN_IMAGE)
+
+    def test_release_validation_rejects_any_misaligned_training_row(self) -> None:
+        rows = list(self.rows)
+        img_id, filename, label, _place, split = rows[0]
+        rows[0] = (img_id, filename, label, 1 - label, split)
+        self._write_metadata(rows)
+
+        with self.assertRaisesRegex(
+            PreflightError, "source training split is not completely correlated"
+        ):
+            validate_release(self._config())
+
+    def test_release_validation_rejects_empty_oracle_or_test_split(self) -> None:
+        for missing_split in (1, 2):
+            with self.subTest(missing_split=missing_split):
+                self._write_metadata(
+                    [row for row in self.rows if row[-1] != missing_split]
+                )
+                with self.assertRaisesRegex(PreflightError, "must all be nonempty"):
+                    validate_release(self._config())
+
     def test_release_basename_and_authoritative_metadata_placement_are_strict(self) -> None:
         config = self._config()
         config["paths"]["waterbirds_root"] = str(
@@ -374,11 +433,11 @@ class PreflightPathContractTests(unittest.TestCase):
         with self.assertRaisesRegex(PreflightError, "root basename must be"):
             validate_release(config)
 
-    def test_discovery_reports_only_the_current_waterbirds95_vlm_family(self) -> None:
+    def test_discovery_reports_only_the_current_waterbirds100_vlm_family(self) -> None:
         current = (
             self.temporary_root
             / "code"
-            / "results_waterbirds95_openclip_laion_dinovit"
+            / "results_waterbirds100_openclip_laion_dinovit"
             / "val"
             / "prediction_cmap"
         )
@@ -392,7 +451,7 @@ class PreflightPathContractTests(unittest.TestCase):
         wrong_release = (
             self.temporary_root
             / "code"
-            / "results_waterbirds100_openclip_laion_dinovit"
+            / "results_waterbirds95_openclip_laion_dinovit"
             / "val"
             / "prediction_cmap"
         )

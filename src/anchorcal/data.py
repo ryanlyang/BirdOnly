@@ -73,6 +73,33 @@ def load_metadata(path: str | Path) -> pd.DataFrame:
     return frame.sort_values("img_id", kind="stable").reset_index(drop=True)
 
 
+def validated_waterbirds100_official_splits(
+    metadata: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Return all three nonempty official splits or fail the WB100 contract."""
+
+    official = {
+        "train": metadata.loc[metadata["split"] == 0].copy(),
+        "oracle_val": metadata.loc[metadata["split"] == 1].copy(),
+        "test": metadata.loc[metadata["split"] == 2].copy(),
+    }
+    empty = [name for name, frame in official.items() if frame.empty]
+    if empty:
+        raise PreflightError(
+            "Waterbirds100 official train, validation, and test splits must all "
+            f"be nonempty; empty={empty}"
+        )
+    official_train = official["train"]
+    misaligned = official_train.loc[official_train["y"] != official_train["place"]]
+    if not misaligned.empty:
+        raise PreflightError(
+            "Waterbirds100 source training split is not completely correlated: "
+            f"{len(misaligned)} of {len(official_train)} rows have y != place; "
+            f"example_img_ids={misaligned['img_id'].astype(int).tolist()[:20]}"
+        )
+    return official
+
+
 def image_path(root: str | Path, image_filename: str) -> Path:
     resolved_root = Path(root).expanduser().resolve()
     normalized = str(image_filename).strip().replace("\\", "/")
@@ -91,11 +118,29 @@ def image_path(root: str | Path, image_filename: str) -> Path:
         raise PreflightError(
             f"unsafe Waterbirds img_filename: {image_filename!r}"
         )
-    candidate = (resolved_root / relative).resolve(strict=False)
-    try:
-        candidate.relative_to(resolved_root)
-    except ValueError as error:
+    candidates = (
+        (resolved_root / relative).resolve(strict=False),
+        (resolved_root / "images" / relative).resolve(strict=False),
+    )
+    for candidate in candidates:
+        try:
+            candidate.relative_to(resolved_root)
+        except ValueError as error:
+            raise PreflightError(
+                f"Waterbirds image path escapes its root: {image_filename!r}"
+            ) from error
+    existing = tuple(
+        dict.fromkeys(candidate for candidate in candidates if candidate.is_file())
+    )
+    if len(existing) > 1:
         raise PreflightError(
-            f"Waterbirds image path escapes its root: {image_filename!r}"
-        ) from error
-    return candidate
+            f"ambiguous Waterbirds image paths for {image_filename!r}: "
+            f"{[str(candidate) for candidate in existing]}"
+        )
+    if existing:
+        return existing[0]
+    # Preserve a concrete, deterministic missing-file path for preflight's
+    # complete failure report.  Waterbirds releases normally store metadata
+    # paths directly under the release root; ``images/`` is the documented
+    # alternate layout.
+    return candidates[0]

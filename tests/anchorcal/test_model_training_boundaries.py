@@ -237,9 +237,9 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                 (
                     preflight / "mask_manifest.json",
                     {
-                        "schema_version": "anchorcal-vlm-mask-manifest-v1",
+                        "schema_version": "anchorcal-vlm-mask-manifest-v2",
                         "producer": (
-                            "openclip_laion_dinovit_weclipplus_prediction_cmap"
+                            "waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap"
                         ),
                         "runtime_resolution": "frozen_manifest_only",
                     },
@@ -262,7 +262,7 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                 },
                 "masks": {
                     "source": (
-                        "openclip_laion_dinovit_weclipplus_prediction_cmap"
+                        "waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap"
                     ),
                     "mapping_mode": (
                         "weclip_producer_first_with_explicit_legacy_fallbacks"

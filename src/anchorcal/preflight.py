@@ -10,7 +10,11 @@ from typing import Any
 
 from PIL import Image
 
-from .data import image_path, load_metadata
+from .data import (
+    image_path,
+    load_metadata,
+    validated_waterbirds100_official_splits,
+)
 from .errors import PreflightError
 from .io import atomic_write_json, atomic_write_yaml, sha256_file
 from .pretrained import resolve_snapshot
@@ -53,6 +57,7 @@ def validate_release(config: dict[str, Any]) -> tuple[Any, str]:
     if metadata_path != root / "metadata.csv" or not metadata_path.is_file():
         raise PreflightError("authoritative <waterbirds_root>/metadata.csv is missing")
     frame = load_metadata(metadata_path)
+    validated_waterbirds100_official_splits(frame)
     return frame, sha256_file(metadata_path)
 
 
@@ -349,15 +354,15 @@ def run_preflight(
             "repo_root": "/home/ryreu/guided_cnn/BirdOnly",
             "waterbirds_root": (
                 "/home/ryreu/guided_cnn/waterbirds/"
-                "waterbird_complete95_forest2water2"
+                "waterbird_1.0_forest2water2"
             ),
             "metadata_path": (
                 "/home/ryreu/guided_cnn/waterbirds/"
-                "waterbird_complete95_forest2water2/metadata.csv"
+                "waterbird_1.0_forest2water2/metadata.csv"
             ),
             "vlm_mask_root": (
                 "/home/ryreu/guided_cnn/Food101/LearningToLook/code/"
-                "WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/"
+                "WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/"
                 "val/prediction_cmap"
             ),
             "hf_home": "/home/ryreu/.cache/huggingface",
@@ -409,7 +414,13 @@ def run_preflight(
     mask_manifest_path = preflight_dir / "mask_manifest.json"
     atomic_write_json(mask_manifest_path, mask_manifest)
     splits = construct_splits(frame, metadata_hash)
-    split_manifest = persist_splits(splits, splits_dir)
+    split_manifest = persist_splits(
+        splits,
+        splits_dir,
+        source_metadata=frame,
+        source_metadata_sha256=metadata_hash,
+        source_release=str(config["data"]["release"]),
+    )
     model_manifest = resolve_snapshot(
         config["paths"]["hf_home"], allow_download=allow_download
     )

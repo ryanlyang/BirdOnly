@@ -7,6 +7,9 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
+The corrected campaign requires AnchorCal `0.4.0` and resolved configuration
+schema `anchorcal-config-v2`; older campaign artifacts are incompatible.
+
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
 single preflight job is allowed to populate the pinned Hugging Face model
 cache. Every later job is forced into Hugging Face offline mode.
@@ -34,16 +37,16 @@ cp configs/anchorcal/paths.local.example.yaml \
 ```
 
 Verify the three established dataset/mask entries. Do not leave
-`REQUIRED_ABSOLUTE_PATH` and do not substitute the separately regenerated
-Waterbirds-100 dataset, a CUB segmentation tree, or a historical WeCLIP+ output
-whose filenames happen to match. The fixed entries are:
+`REQUIRED_ABSOLUTE_PATH` and do not substitute Waterbirds-95, a CUB
+segmentation tree, or a historical WeCLIP+ output whose filenames happen to
+match. The fixed Waterbirds-100 entries are:
 
 ```yaml
 paths:
   repo_root: /home/ryreu/guided_cnn/BirdOnly
-  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
-  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
-  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
+  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
+  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 ```
@@ -61,6 +64,8 @@ PYTHONPATH=/home/ryreu/guided_cnn/BirdOnly/src \
 The production preflight validates the authoritative release and metadata, then
 maps each required row from the complete dataset-relative `img_filename` using
 the exact `generate_pseudo_masks_waterbirds._make_image_id` flattening rule.
+It also requires every official split-0 row to satisfy `y == place`; it never
+filters a partially biased release into a surrogate Waterbirds100 pool.
 It tries the producer name first, fails on collisions, reuse, missing or
 ambiguous mappings, and strictly decodes categorical Pascal/VOC class ID 1
 (RGB `[128, 0, 0]`) rather than thresholding a white binary mask. Complete
@@ -68,12 +73,15 @@ coverage is required for official splits 0 and 1 only. Official split 2 has no
 mask requirement, and test classification must not load masks.
 
 The accepted mapping is frozen in `preflight/mask_manifest.json` with schema
-`anchorcal-vlm-mask-manifest-v1`. The manifest includes the exact VLM root,
-metadata hash, locked producer identifier, mapping and decoder implementation
-versions, canonical per-row mapping, dimensions, decoded class/color counts,
-file sizes, per-mask SHA-256 values, split coverage, collision and extras
-reports, and a deterministic content hash. It records the AnchorCal checkout
-revision but does not claim an unknown external GALS producer-source revision.
+`anchorcal-vlm-mask-manifest-v2`. The manifest includes the exact VLM root,
+metadata hash, locked source identifier
+`waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`, mapping and
+decoder implementation versions, canonical per-row mapping, dimensions,
+decoded class/color counts, file sizes, per-mask SHA-256 values, split
+coverage, collision and extras reports, and a deterministic content hash. It
+records the AnchorCal checkout revision but does not claim an unknown external
+GALS producer-source revision. The deterministic dataset partitions are
+separately frozen in `splits/manifest.json` with schema `anchorcal-splits-v3`.
 Every downstream job verifies the frozen hashes. Preflight also performs the
 pretrained-hash, package, architecture, and GH200 checks. A failed preflight
 prevents every downstream stage.
@@ -167,6 +175,7 @@ preflight/report.json
 preflight/mask_manifest.json
 preflight/preflight_artifacts.sha256
 preflight/preprocessing_manifest.json
+splits/manifest.json
 environment/environment.json
 environment/package-lock.txt
 debug/analysis/summary.json

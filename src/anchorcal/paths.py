@@ -22,12 +22,12 @@ def discover_candidates(search_roots: list[str | Path]) -> dict[str, list[str]]:
         root = Path(root_value).expanduser()
         if not root.exists():
             continue
-        for candidate in root.rglob("waterbird_complete95_forest2water2"):
+        for candidate in root.rglob("waterbird_1.0_forest2water2"):
             if candidate.is_dir() and (candidate / "metadata.csv").is_file():
                 releases.add(str(candidate.resolve()))
                 metadata.add(str((candidate / "metadata.csv").resolve()))
         for results_root in root.rglob(
-            "results_waterbirds95_openclip_laion_dinovit"
+            "results_waterbirds100_openclip_laion_dinovit"
         ):
             candidate = results_root / "val" / "prediction_cmap"
             if candidate.is_dir():

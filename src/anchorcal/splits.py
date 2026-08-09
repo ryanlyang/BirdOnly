@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .data import validated_waterbirds100_official_splits
 from .errors import PreflightError
 from .io import sha256_bytes, sha256_file
 
@@ -22,6 +23,8 @@ SPLIT_COLUMNS = (
     "split_seed",
     "source_metadata_sha256",
 )
+
+WATERBIRDS100_RELEASE = "waterbird_1.0_forest2water2"
 
 
 def _split_stratified(
@@ -50,11 +53,14 @@ def construct_splits(
     split_seed: int = 1729,
     calibration_seed: int = 2718,
 ) -> dict[str, pd.DataFrame]:
-    official_train = metadata.loc[metadata["split"] == 0].copy()
-    aligned = official_train.loc[official_train["y"] == official_train["place"]].copy()
-    if aligned.empty:
-        raise PreflightError("Waterbirds100 aligned official-training pool is empty")
-    candidate_train, biased_val = _split_stratified(aligned, 0.20, split_seed)
+    official = validated_waterbirds100_official_splits(metadata)
+    official_train = official["train"]
+    # Waterbirds100 is a separately generated release whose complete official
+    # training split is already 100%-correlated.  Use every source row; never
+    # manufacture the condition by filtering counterexamples from Waterbirds95.
+    candidate_train, biased_val = _split_stratified(
+        official_train, 0.20, split_seed
+    )
     expert_train, expert_calibration = _split_stratified(
         candidate_train, 0.10, calibration_seed
     )
@@ -63,8 +69,8 @@ def construct_splits(
         "biased_val": biased_val,
         "expert_train": expert_train,
         "expert_calibration": expert_calibration,
-        "oracle_val": metadata.loc[metadata["split"] == 1].copy(),
-        "test": metadata.loc[metadata["split"] == 2].copy(),
+        "oracle_val": official["oracle_val"],
+        "test": official["test"],
     }
     for name, frame in result.items():
         frame = frame.sort_values("img_id", kind="stable").reset_index(drop=True)
@@ -80,6 +86,38 @@ def construct_splits(
 
 
 def _assert_split_contract(splits: dict[str, pd.DataFrame]) -> dict[str, object]:
+    required_names = {
+        "candidate_train",
+        "biased_val",
+        "expert_train",
+        "expert_calibration",
+        "oracle_val",
+        "test",
+    }
+    if set(splits) != required_names:
+        raise AssertionError(
+            "split collection has missing or unexpected names: "
+            f"found={sorted(splits)}, expected={sorted(required_names)}"
+        )
+    empty = sorted(name for name, frame in splits.items() if frame.empty)
+    if empty:
+        raise AssertionError(f"Waterbirds100 persisted splits are empty: {empty}")
+    expected_official_split = {
+        "candidate_train": 0,
+        "biased_val": 0,
+        "expert_train": 0,
+        "expert_calibration": 0,
+        "oracle_val": 1,
+        "test": 2,
+    }
+    for name, frame in splits.items():
+        if frame["img_id"].duplicated().any():
+            raise AssertionError(f"{name} contains duplicate img_id values")
+        observed_split = set(frame["split"].astype(int))
+        if observed_split != {expected_official_split[name]}:
+            raise AssertionError(
+                f"{name} has wrong official split values: {sorted(observed_split)}"
+            )
     ids = {name: set(frame["img_id"].astype(int)) for name, frame in splits.items()}
     candidate_biased_overlap = ids["candidate_train"] & ids["biased_val"]
     expert_overlap = ids["expert_train"] & ids["expert_calibration"]
@@ -127,6 +165,18 @@ def _assert_split_contract(splits: dict[str, pd.DataFrame]) -> dict[str, object]
             "passed": True,
             "overlap_count": len(train_hidden_overlap),
         },
+        "official_splits_nonempty": {
+            "passed": True,
+            "rows": {name: int(len(frame)) for name, frame in splits.items()},
+        },
+        "official_split_values": {
+            "passed": True,
+            "values": expected_official_split,
+        },
+        "candidate_train_biased_val_union": {
+            "passed": True,
+            "rows": len(top_level_train),
+        },
         "waterbirds100_alignment": {
             "passed": all(aligned_passed.values()),
             "splits": aligned_passed,
@@ -144,6 +194,99 @@ def _describe(frame: pd.DataFrame) -> dict[str, object]:
             for (y, place), count in frame.groupby(["y", "place"]).size().items()
         },
         "empirical_correlation": float((frame["y"] == frame["place"]).mean()),
+    }
+
+
+def _membership_summary(frame: pd.DataFrame, official_split: int) -> dict[str, object]:
+    ids = sorted(frame["img_id"].astype(int).tolist())
+    encoded = json.dumps(ids, separators=(",", ":")).encode("ascii")
+    return {
+        "official_split": official_split,
+        "rows": len(ids),
+        "img_ids_sha256": sha256_bytes(encoded),
+        "hash_encoding": "sha256-canonical-json-sorted-img-ids-v1",
+    }
+
+
+def _source_binding(
+    splits: dict[str, pd.DataFrame],
+    *,
+    source_metadata: pd.DataFrame,
+    source_metadata_sha256: str,
+    source_release: str,
+) -> dict[str, object]:
+    if source_release != WATERBIRDS100_RELEASE:
+        raise PreflightError(
+            f"split source release must be {WATERBIRDS100_RELEASE!r}, "
+            f"found {source_release!r}"
+        )
+    if (
+        not isinstance(source_metadata_sha256, str)
+        or len(source_metadata_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in source_metadata_sha256
+        )
+    ):
+        raise PreflightError("split source metadata SHA-256 is invalid")
+    recorded_hashes = {
+        str(value)
+        for frame in splits.values()
+        for value in frame["source_metadata_sha256"].unique().tolist()
+    }
+    if recorded_hashes != {source_metadata_sha256}:
+        raise PreflightError(
+            "derived split metadata hashes do not match the authoritative source"
+        )
+
+    official = validated_waterbirds100_official_splits(source_metadata)
+    expected = {
+        "train": set(official["train"]["img_id"].astype(int)),
+        "oracle_val": set(official["oracle_val"]["img_id"].astype(int)),
+        "test": set(official["test"]["img_id"].astype(int)),
+    }
+    observed = {
+        "train": set(splits["candidate_train"]["img_id"].astype(int))
+        | set(splits["biased_val"]["img_id"].astype(int)),
+        "oracle_val": set(splits["oracle_val"]["img_id"].astype(int)),
+        "test": set(splits["test"]["img_id"].astype(int)),
+    }
+    mismatches = {
+        name: {
+            "missing": sorted(expected[name] - observed[name])[:20],
+            "unexpected": sorted(observed[name] - expected[name])[:20],
+        }
+        for name in expected
+        if expected[name] != observed[name]
+    }
+    if mismatches:
+        raise PreflightError(
+            "derived splits do not preserve complete official membership: "
+            f"{mismatches}"
+        )
+
+    train_summary = _membership_summary(official["train"], 0)
+    train_summary.update(
+        {
+            "complete_membership_verified": True,
+            "all_y_equal_place": True,
+            "misaligned_rows": 0,
+        }
+    )
+    return {
+        "source_release": source_release,
+        "source_metadata_sha256": source_metadata_sha256,
+        "official_membership": {
+            "train": train_summary,
+            "oracle_val": {
+                **_membership_summary(official["oracle_val"], 1),
+                "complete_membership_verified": True,
+            },
+            "test": {
+                **_membership_summary(official["test"], 2),
+                "complete_membership_verified": True,
+            },
+        },
     }
 
 
@@ -200,8 +343,20 @@ def _atomic_create_or_verify(path: Path, expected: bytes) -> None:
 
 
 def persist_splits(
-    splits: dict[str, pd.DataFrame], output_dir: str | Path
+    splits: dict[str, pd.DataFrame],
+    output_dir: str | Path,
+    *,
+    source_metadata: pd.DataFrame,
+    source_metadata_sha256: str,
+    source_release: str,
 ) -> dict[str, object]:
+    contract = _assert_split_contract(splits)
+    source_binding = _source_binding(
+        splits,
+        source_metadata=source_metadata,
+        source_metadata_sha256=source_metadata_sha256,
+        source_release=source_release,
+    )
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
@@ -212,9 +367,9 @@ def persist_splits(
         _atomic_create_or_verify(path, payload)
         paths[name] = path
         payloads[name] = payload
-    contract = _assert_split_contract(splits)
     manifest: dict[str, object] = {
-        "schema_version": "anchorcal-splits-v2",
+        "schema_version": "anchorcal-splits-v3",
+        **source_binding,
         "contract_assertions": contract,
         "splits": {
             name: {

@@ -41,13 +41,9 @@ anchorcal_verify_file() {
 anchorcal_verify_package_lock() {
   local temporary
   temporary=$(mktemp "${TMPDIR:-/tmp}/anchorcal-package-lock.${SLURM_JOB_ID:-nojob}.XXXXXX")
-  "$ANCHORCAL_PYTHON" -c 'from importlib import metadata
-rows = {
-    "{}=={}".format(dist.metadata["Name"], dist.version)
-    for dist in metadata.distributions()
-    if dist.metadata.get("Name")
-}
-print("\n".join(sorted(rows, key=str.casefold)))' > "$temporary"
+  "$ANCHORCAL_PYTHON" -c 'import sys
+from anchorcal.runtime import write_package_lock
+write_package_lock(sys.argv[1])' "$temporary"
   if ! cmp -s -- "$ANCHORCAL_PACKAGE_LOCK" "$temporary"; then
     echo "Frozen and current package locks differ:" >&2
     diff -u -- "$ANCHORCAL_PACKAGE_LOCK" "$temporary" >&2 || true

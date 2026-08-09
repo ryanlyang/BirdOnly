@@ -19,7 +19,7 @@ The overall policy is:
 
 Most of the reviewer recommendations are accepted. The main clarifications or overrides are:
 
-1. Source masks are the locked Waterbirds-95 VLM `prediction_cmap` PNGs and
+1. Source masks are the locked Waterbirds-100 VLM `prediction_cmap` PNGs and
    use strict categorical VOC decoding with foreground class ID 1.
 2. Empty stochastic foreground crops use a bounded rejection sampler and a logged deterministic fallback. Excessive fallbacks abort the run.
 3. The background branch does **not** sample with replacement in the primary design. The token budget falls back from 64 to 48 or 32 under a prespecified coverage rule.
@@ -28,7 +28,7 @@ Most of the reviewer recommendations are accepted. The main clarifications or ov
 6. The blur baseline uses mask-normalized background-only convolution so bird color cannot bleed into the blurred background.
 7. A small set of rolling best candidate checkpoints is retained, rather than saving all epochs or saving none.
 8. The pilot creates an AnchorCal decision receipt before the final joined analysis, but this remains an exploratory study rather than a strict blinded preregistration.
-9. The exact Waterbirds-95 image, metadata, and VLM-mask roots on TIGRIS are
+9. The exact Waterbirds-100 image, metadata, and VLM-mask roots on TIGRIS are
    established below and must be frozen in the local path configuration.
 10. HDF5 is the primary candidate-output storage backend.
 11. The originally pinned empty Hugging Face revision is replaced by a populated, hash-verified revision.
@@ -38,39 +38,48 @@ Most of the reviewer recommendations are accepted. The main clarifications or ov
 
 ---
 
-# Authoritative VLM-Mask Correction and Supersession
+# Authoritative Waterbirds100 Dataset and VLM-Mask Correction
 
-This section is a later binding correction. It supersedes every conflicting
-CUB-mask, no-VLM, binary-source-encoding, relative-CUB-stem, and test-mask
-requirement in the implementation plan and in earlier answers below. In
-particular, it overrides the implementation plan's Sections 3.1, 3.2, and 5.1
+This section is the latest binding correction. It supersedes every conflicting
+Waterbirds-95-subset, CUB-mask, no-VLM, binary-source-encoding,
+relative-CUB-stem, and test-mask requirement in the implementation plan and in
+earlier answers below. In particular, it overrides the implementation plan's
+Sections 3.1, 3.2, and 5.1
 and closing mask-source outlook; Summary items 1 and 9; Questions 2, 4, 89, and
 the mask-mapping portion of Question 108; the mask fields in the Final Resolved
 Configuration Snapshot; and the mask entries under Remaining
 Environment-Specific Preflight Items. Non-conflicting requirements remain
 binding.
 
-The dataset definition does **not** change:
+This incompatible correction is versioned as AnchorCal package `0.4.0`,
+resolved configuration schema `anchorcal-config-v2`, VLM-mask manifest schema
+`anchorcal-vlm-mask-manifest-v2`, and split manifest schema
+`anchorcal-splits-v3`. Older schema artifacts cannot satisfy this campaign.
+
+The authoritative dataset is the dedicated Waterbirds-100 release:
 
 ```text
-Waterbirds100 = official split-0 rows with y == place
-                 from waterbird_complete95_forest2water2
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
 ```
 
-It is not the separately regenerated `waterbird_1.0_forest2water2` directory.
-Canonical sample identity remains metadata `img_id`; DataFrame row position is
-never an identity or join key.
+Its entire official split 0 is the development source and must already satisfy
+`y == place` for every row. Preflight must hard-fail on any counterexample; it
+must not silently create Waterbirds100 by filtering the partially biased
+Waterbirds-95 release. Official split 1 is the untouched oracle-validation set,
+and official split 2 is the reporting-only test set. Canonical sample identity
+remains metadata `img_id`; DataFrame row position is never an identity or join
+key.
 
 The authoritative mask source is the fixed OpenCLIP-LAION + DINOvIT WeCLIP+
 VLM `prediction_cmap` bank:
 
 ```text
-/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-This bank is an audited pilot input, not official CUB ground truth. Do not mix
-it with CUB segmentations, historical WeCLIP+ output trees, the separately
-generated Waterbirds-100 VLM root, or another mask family.
+This matching Waterbirds-100 bank is an audited pilot input, not official CUB
+ground truth. Do not mix it with CUB segmentations, historical WeCLIP+ output
+trees, the Waterbirds-95 VLM root, or another mask family.
 
 Join each metadata row from its complete dataset-relative `img_filename`.
 Reproduce `generate_pseudo_masks_waterbirds._make_image_id`: reject absolute or
@@ -100,13 +109,14 @@ not attempt to load a mask. Extra mask files may be inventoried but cannot
 change the required set or become an implicit input.
 
 Preflight must publish `preflight/mask_manifest.json` with schema
-`anchorcal-vlm-mask-manifest-v1`, canonically sorted by `img_id`, before
+`anchorcal-vlm-mask-manifest-v2`, canonically sorted by `img_id`, before
 training. Its provenance binds the resolved dataset and metadata hash, exact
-VLM root, locked producer identifier, mapping and decoder implementation
-versions, map format, foreground IDs `[1]`, required splits `[0, 1]`, and the
-AnchorCal configuration or checkout revision. The external GALS producer-source
-revision is not established; do not invent one or relabel the AnchorCal commit
-as that external revision.
+VLM root, locked source identifier
+`waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`, mapping and
+decoder implementation versions, map format, foreground IDs `[1]`, required
+splits `[0, 1]`, and the AnchorCal configuration or checkout revision. The
+external GALS producer-source revision is not established; do not invent one
+or relabel the AnchorCal commit as that external revision.
 
 Each required-row entry records `img_id`, metadata audit index,
 `img_filename`, official split, derived producer name, resolved mask path,
@@ -125,10 +135,10 @@ reverify this frozen manifest hash; workers never repeat best-effort mapping.
 
 **Decision**
 
-Use the standard Group DRO Waterbirds release directory:
+Use the dedicated Waterbirds-100 release directory:
 
 ```text
-waterbird_complete95_forest2water2
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
 ```
 
 The authoritative metadata file is:
@@ -168,8 +178,9 @@ If the available metadata file does not contain a unique `img_id`, stop. Do not 
 
 **Decision**
 
-Use the fixed Waterbirds-95 OpenCLIP-LAION + DINOvIT WeCLIP+
-`prediction_cmap` bank named in the Authoritative VLM-Mask Correction above.
+Use the fixed Waterbirds-100 OpenCLIP-LAION + DINOvIT WeCLIP+
+`prediction_cmap` bank named in the Authoritative Waterbirds100 Dataset and
+VLM-Mask Correction above.
 These are categorical VLM teacher maps and are not represented as official CUB
 ground truth.
 
@@ -404,6 +415,7 @@ Required files:
 ```text
 splits/waterbirds100_expert_train.csv
 splits/waterbirds100_expert_calibration.csv
+splits/manifest.json
 ```
 
 Each file must include:
@@ -424,6 +436,11 @@ Also store:
 - overlap assertions;
 - union assertion against the candidate-training pool.
 
+`splits/manifest.json` uses schema `anchorcal-splits-v3` and additionally binds
+the dedicated release, metadata hash, complete official split-0 membership and
+alignment audit, all derived split hashes, untouched official split-1 oracle
+membership, and untouched official split-2 reporting membership.
+
 ---
 
 ## 12. How should deterministic stratified splits handle rounding and input ordering?
@@ -435,7 +452,8 @@ Sort by canonical `img_id`, then perform fixed-seed stratified splitting.
 **Implementation lock**
 
 1. Sort input rows by `img_id`.
-2. Stratify by class for the Waterbirds100 aligned pool.
+2. Stratify by class over the complete, preflight-validated Waterbirds100
+   official-training pool.
 3. Use the specified fixed seed.
 4. Let the selected splitting library perform deterministic integer allocation.
 5. Persist resulting IDs.
@@ -2214,13 +2232,13 @@ HF_HOME
 /home/ryreu/.cache/huggingface
 
 WATERBIRDS_ROOT
-/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
 
 WATERBIRDS_METADATA
-/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
+/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
 
 VLM_MASK_ROOT
-/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
 Freeze these established TIGRIS paths in the local uncommitted configuration:
@@ -2233,23 +2251,25 @@ with:
 
 ```yaml
 repo_root: /home/ryreu/guided_cnn/BirdOnly
-waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
-metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
-vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
+metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 hf_home: /home/ryreu/.cache/huggingface
 output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 ```
 
 Preflight requirements:
 
-- `waterbirds_root` basename or contents must identify `waterbird_complete95_forest2water2`;
+- `waterbirds_root` basename or contents must identify `waterbird_1.0_forest2water2`;
 - `metadata_path` must equal the authoritative metadata file under that release;
-- `vlm_mask_root` must equal the exact Waterbirds-95 VLM root above;
+- every official split-0 row must satisfy `y == place`, with no filtering used
+  to manufacture that property;
+- `vlm_mask_root` must equal the exact Waterbirds-100 VLM root above;
 - the VLM bank must pass the producer-first `img_filename` join, strict VOC
   class-1 decode, dimension, split-0/1 coverage, and one-mask-per-required-`img_id`
   audits;
 - preflight must write `preflight/mask_manifest.json` with schema
-  `anchorcal-vlm-mask-manifest-v1`, plus its immutable content hash;
+  `anchorcal-vlm-mask-manifest-v2`, plus its immutable content hash;
 - all paths are converted to absolute resolved paths;
 - path config is copied into the run manifest;
 - no training job starts while a `REQUIRED_ABSOLUTE_PATH` value remains.
@@ -2855,26 +2875,27 @@ vector is constant:
 
 **Decision**
 
-`Waterbirds100` means the `y == place` aligned development subset derived from
-the standard `waterbird_complete95_forest2water2` release. It does not mean a
-separately regenerated dataset directory whose name contains `1.0`.
+`Waterbirds100` means the dedicated `waterbird_1.0_forest2water2` release. Its
+complete official split 0 is the development source. Preflight must assert that
+every one of those rows has `y == place`; it must not filter a Waterbirds-95
+training split to manufacture the source pool.
 
-For the standard release, map the complete dataset-relative `img_filename` to
+For this release, map the complete dataset-relative `img_filename` to
 the VLM PNG using the exact producer-compatible flattening rule in the
-Authoritative VLM-Mask Correction. Do not preserve a nested class directory and
-do not map from row position or `img_id`. Require exact image and mask
-width/height for every required split-0/1 row.
+Authoritative Waterbirds100 Dataset and VLM-Mask Correction. Do not preserve a
+nested class directory and do not map from row position or `img_id`. Require
+exact image and mask width/height for every required split-0/1 row.
 
 Path configuration distinguishes:
 
 ```yaml
-vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
 Preflight must reject producer-name collisions, missing or ambiguous required
 maps, mask reuse, dimensional mismatches, and invalid VOC content. It freezes
 the accepted one-to-one mapping in `preflight/mask_manifest.json` with schema
-`anchorcal-vlm-mask-manifest-v1` and a deterministic hash. Official split 2 is
+`anchorcal-vlm-mask-manifest-v2` and a deterministic hash. Official split 2 is
 outside the mask-coverage contract.
 
 ---
@@ -3000,9 +3021,11 @@ the practical selection receipt is frozen.
 # Final Resolved Configuration Snapshot
 
 ```yaml
+schema_version: anchorcal-config-v2
+
 data:
-  release: waterbird_complete95_forest2water2
-  waterbirds100_definition: "official-train rows with y == place"
+  release: waterbird_1.0_forest2water2
+  waterbirds100_definition: "complete official split 0; hard-assert y == place"
   canonical_id: img_id
   image_size: 224
   patch_size: 16
@@ -3016,11 +3039,11 @@ data:
   dilation_radius: 8
 
 masks:
-  source: openclip_laion_dinovit_weclipplus_prediction_cmap
+  source: waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap
   mapping_mode: weclip_producer_first_with_explicit_legacy_fallbacks
   mapping_version: weclip-img-filename-v1
   decoder_version: pascal-voc-rgb-class-id-v1
-  manifest_schema: anchorcal-vlm-mask-manifest-v1
+  manifest_schema: anchorcal-vlm-mask-manifest-v2
   format: voc_colormap_class_ids
   foreground_class_ids: [1]
   allowed_class_ids: [0, 1]
@@ -3033,9 +3056,9 @@ masks:
 
 paths:
   repo_root: /home/ryreu/guided_cnn/BirdOnly
-  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
-  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
-  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+  waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
+  metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
+  vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 
@@ -3114,11 +3137,11 @@ The established TIGRIS data paths written into
 `configs/anchorcal/paths.local.yaml` are:
 
 ```text
-waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2
-metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv
-vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap
+waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
+metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
+vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-Preflight must verify these exact roots rather than substitute similarly named
-Waterbirds-100, historical WeCLIP+, or CUB paths. Their resolved values and the
-immutable VLM mapping-manifest hash become part of every run manifest.
+Preflight must verify these exact roots rather than substitute Waterbirds-95,
+historical WeCLIP+, or CUB paths. Their resolved values and the immutable VLM
+mapping-manifest hash become part of every run manifest.

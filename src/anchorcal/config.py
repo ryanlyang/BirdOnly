@@ -20,7 +20,8 @@ REQUIRED_PATH_KEYS = (
 )
 
 LOCKED = {
-    ("data", "release"): "waterbird_complete95_forest2water2",
+    ("schema_version",): "anchorcal-config-v2",
+    ("data", "release"): "waterbird_1.0_forest2water2",
     ("data", "image_size"): 224,
     ("data", "patch_size"): 16,
     ("data", "split_seed"): 1729,
@@ -34,11 +35,14 @@ LOCKED = {
     ("data", "random_resized_crop_scale"): [0.70, 1.00],
     ("data", "random_resized_crop_ratio"): [0.75, 1.3333333333],
     ("data", "crop_max_attempts"): 10,
-    ("masks", "source"): "openclip_laion_dinovit_weclipplus_prediction_cmap",
+    (
+        "masks",
+        "source",
+    ): "waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap",
     ("masks", "mapping_mode"): "weclip_producer_first_with_explicit_legacy_fallbacks",
     ("masks", "mapping_version"): "weclip-img-filename-v1",
     ("masks", "decoder_version"): "pascal-voc-rgb-class-id-v1",
-    ("masks", "manifest_schema"): "anchorcal-vlm-mask-manifest-v1",
+    ("masks", "manifest_schema"): "anchorcal-vlm-mask-manifest-v2",
     ("masks", "format"): "voc_colormap_class_ids",
     ("masks", "foreground_class_ids"): [1],
     ("masks", "allowed_class_ids"): [0, 1],

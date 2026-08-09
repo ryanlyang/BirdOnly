@@ -5,19 +5,32 @@ Local tests use generated fixtures and small synthetic models. Production
 evidence is created separately under the frozen campaign output root; no entry
 below claims that the real dataset or TIGRIS GH200 was available locally.
 
-## Authoritative VLM-mask correction: implemented and locally revalidated
+## Authoritative Waterbirds100 dataset and VLM-mask correction
 
-- The binding specifications now replace the earlier CUB-mask assumption with
-  the exact Waterbirds-95 OpenCLIP-LAION + DINOvIT VLM bank at
-  `/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap`.
+- A prior inferred lock incorrectly defined this pilot by filtering the
+  partially biased Waterbirds-95 release, despite the TIGRIS handoff already
+  documenting the dedicated Waterbirds-100 dataset and mask bank. That
+  inference is superseded; it must not be used for a production launch.
+- The authoritative dataset is
+  `/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2`, with metadata
+  at `<waterbirds_root>/metadata.csv`. Its complete official split 0 must
+  already satisfy `y == place`; preflight hard-fails rather than silently
+  discarding counterexamples. Official split 1 remains oracle-only and split 2
+  remains reporting-only.
+- The binding specifications replace the earlier CUB-mask assumption with the
+  matching Waterbirds-100 OpenCLIP-LAION + DINOvIT VLM bank at
+  `/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap`.
 - The corrected contract requires a producer-first join from the complete
   metadata `img_filename`, strict Pascal/VOC class-1 decoding, complete
   one-to-one coverage for official splits 0 and 1 only, no official split-2
   mask requirement, and an immutable `preflight/mask_manifest.json` with schema
-  `anchorcal-vlm-mask-manifest-v1` and a deterministic content hash.
-- `Waterbirds100` remains the `y == place` aligned subset of official split 0
-  from `waterbird_complete95_forest2water2`; it is not the separate
-  `waterbird_1.0_forest2water2` release.
+  `anchorcal-vlm-mask-manifest-v2` and a deterministic content hash. The mask
+  source identifier is
+  `waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`.
+- The incompatible provenance correction bumps the package to `0.4.0`, the
+  resolved config to `anchorcal-config-v2`, and the split manifest to
+  `anchorcal-splits-v3`; this prevents stale Waterbirds-95 artifacts from
+  satisfying the corrected Waterbirds-100 contracts.
 - Replaced both CUB path keys with one locked `vlm_mask_root`; added the exact
   producer, mapping, decoder, VOC class, nearest-interpolation, split-coverage,
   and manifest-only-runtime configuration locks.
@@ -32,9 +45,10 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
 - Bumped incompatible branch and candidate provenance schemas, and bound the
   VLM root, source, contract, bank hash, and manifest hash through restart,
   branch, anchor, candidate, decision, and final-campaign verification.
-- On 2026-08-09, the Torch-capable local suites passed **158 AnchorCal tests**
-  and **81 retained SETV tests** (**239 total**). Python compilation, shell
-  syntax checks, CLI/config smoke checks, and `git diff --check` also passed.
+- On 2026-08-09, after the dataset, launcher, split, schema, and provenance
+  corrections, the corrected suite passed **171 AnchorCal tests** and all
+  **81 retained SETV tests** (**252 total**). This is the current local
+  code/launcher verification evidence for the Waterbirds-100 contract.
 - Real Waterbirds/VLM coverage, the pinned model cache, and GH200 execution
   remain production preflight and smoke gates on TIGRIS; local fixtures do not
   claim that external runtime evidence.
@@ -48,8 +62,8 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   checkout convention.
 - Created and maintained `IMPLEMENTATION_TRACEABILITY.md`. At that time,
   machine-local data and CUB-mask paths were deliberately unresolved; this
-  historical assumption is superseded by the authoritative VLM correction
-  above.
+  historical assumption is superseded by the authoritative Waterbirds100
+  dataset and VLM correction above.
 - Resolved the explicit precedence issues listed at the end of the traceability
   file; no third behavior was invented.
 
@@ -64,7 +78,7 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   `anchorcal_mapping_manifest.json`. That historical contract is superseded:
   the corrected implementation must instead freeze the producer-derived VLM
   join and per-file hashes in `preflight/mask_manifest.json` using schema
-  `anchorcal-vlm-mask-manifest-v1`.
+  `anchorcal-vlm-mask-manifest-v2`.
 - Review also strengthened production preflight to validate fixed TIGRIS repo,
   cache and output roots, the exact interpreter, aarch64, and GH200.
 - Verification: configuration/split/mask tests plus generated-fixture
@@ -230,11 +244,11 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   foreground-stream intervention invariance, aggregate fallback reporting,
   exact preflight checksum membership, per-run hidden-input hashes, strict
   metadata containment, and explicit prediction-stability diagnostics.
-- Re-ran all 149 AnchorCal unit/integration/adversarial tests with the available
-  training environment and all 81 historical repository tests with the local
-  interpreter. Python compilation, all CLI help paths, package build/import,
-  shell syntax checks, import-boundary checks, placeholder/dead-code scans, and
-  whitespace checks also pass.
+- During that earlier, pre-correction audit, re-ran the then-current AnchorCal
+  unit/integration/adversarial suite and historical repository suite with the
+  available local interpreters. Python compilation, all CLI help paths, package
+  build/import, shell syntax checks, import-boundary checks,
+  placeholder/dead-code scans, and whitespace checks also passed.
 - Re-read all 114 binding decisions against the maintained traceability table
   and commissioned independent scientific, artifact-contract, and TIGRIS
   audits. Their production blockers were repaired and regression-tested before

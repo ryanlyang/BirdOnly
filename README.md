@@ -1,6 +1,8 @@
 # AnchorCal Waterbirds100 pilot
 
 The active research implementation is the independent `anchorcal` package.
+The corrected Waterbirds100 contract is AnchorCal version `0.4.0` with resolved
+configuration schema `anchorcal-config-v2`.
 It builds controlled foreground-reliance anchors, uses them to select one of
 four practical validation criteria, and evaluates that frozen choice on a
 six-run ordinary ViT candidate grid. The binding documents are
@@ -9,15 +11,19 @@ six-run ordinary ViT candidate grid. The binding documents are
 precedence.
 
 Copy `configs/anchorcal/paths.local.example.yaml` to the ignored
-`configs/anchorcal/paths.local.yaml` and verify the frozen Waterbirds-95 image,
+`configs/anchorcal/paths.local.yaml` and verify the frozen Waterbirds-100 image,
 metadata, and VLM-mask paths. The mask input is the audited
 OpenCLIP-LAION + DINOvIT `prediction_cmap` bank at
-`/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap`.
+`/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap`,
+paired with `/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2`.
+The complete official training split must already satisfy `y == place`; the
+pipeline hard-fails rather than filtering Waterbirds-95 into a surrogate.
 AnchorCal joins it producer-first from the complete metadata `img_filename`,
 decodes Pascal/VOC foreground class 1, and requires complete official split-0/1
 coverage; official split 2 has no mask requirement. Preflight freezes the
 one-to-one mapping and per-file hashes in `preflight/mask_manifest.json` with
-schema `anchorcal-vlm-mask-manifest-v1`. Then use
+schema `anchorcal-vlm-mask-manifest-v2`; deterministic splits are bound by
+`splits/manifest.json` schema `anchorcal-splits-v3`. Then use
 `scripts/anchorcal/submit_campaign.sh` from a clean committed TIGRIS checkout.
 See `docs/anchorcal/TIGRIS_RUNBOOK.md` and the implementation traceability log
 for the exact workflow.

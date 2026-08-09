@@ -131,7 +131,7 @@ class AnalysisIntegrationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.output = Path(self.temporary.name)
         self.waterbirds_root = (
-            self.output / "waterbird_complete95_forest2water2"
+            self.output / "waterbird_1.0_forest2water2"
         )
         self.metadata_path = self.waterbirds_root / "metadata.csv"
         self.vlm_mask_root = self.output / "prediction_cmap"

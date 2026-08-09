@@ -22,14 +22,14 @@ from .errors import PreflightError
 from .io import hash_object, sha256_bytes, sha256_file
 
 
-VLM_MASK_MANIFEST_SCHEMA = "anchorcal-vlm-mask-manifest-v1"
+VLM_MASK_MANIFEST_SCHEMA = "anchorcal-vlm-mask-manifest-v2"
 VLM_MASK_FORMAT = "voc_colormap_class_ids"
 VLM_FOREGROUND_CLASS_IDS = (1,)
 VLM_ALLOWED_CLASS_IDS = (0, 1)
 VLM_REQUIRED_OFFICIAL_SPLITS = (0, 1)
 VLM_OPTIONAL_OFFICIAL_SPLITS = (2,)
 VLM_MAPPING_MODE = "weclip_producer_first_with_explicit_legacy_fallbacks"
-VLM_PRODUCER = "openclip_laion_dinovit_weclipplus_prediction_cmap"
+VLM_PRODUCER = "waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap"
 VLM_MAPPING_VERSION = "weclip-img-filename-v1"
 VLM_DECODER_VERSION = "pascal-voc-rgb-class-id-v1"
 VLM_INTERPOLATION = "nearest"

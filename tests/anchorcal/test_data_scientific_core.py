@@ -268,12 +268,14 @@ class MetadataContractTests(unittest.TestCase):
 
 
 class SplitContractTests(unittest.TestCase):
+    RELEASE = "waterbird_1.0_forest2water2"
+
     @staticmethod
     def _metadata() -> pd.DataFrame:
         rows: list[dict[str, object]] = []
         img_id = 0
-        # A sufficiently large aligned official-training pool for both nested
-        # stratified splits, plus misaligned rows that must be removed.
+        # The separately generated Waterbirds100 official-training split is
+        # already fully aligned and is used in its entirety.
         for label in (0, 1):
             for _ in range(80):
                 rows.append(
@@ -282,17 +284,6 @@ class SplitContractTests(unittest.TestCase):
                         "img_filename": f"class_{label}/{img_id}.jpg",
                         "y": label,
                         "place": label,
-                        "split": 0,
-                    }
-                )
-                img_id += 1
-            for _ in range(5):
-                rows.append(
-                    {
-                        "img_id": img_id,
-                        "img_filename": f"class_{label}/{img_id}.jpg",
-                        "y": label,
-                        "place": 1 - label,
                         "split": 0,
                     }
                 )
@@ -313,6 +304,22 @@ class SplitContractTests(unittest.TestCase):
                         img_id += 1
         return pd.DataFrame(rows)
 
+    @classmethod
+    def _persist(
+        cls,
+        splits: dict[str, pd.DataFrame],
+        output: str | Path,
+        metadata: pd.DataFrame,
+        metadata_sha256: str,
+    ) -> dict[str, object]:
+        return persist_splits(
+            splits,
+            output,
+            source_metadata=metadata,
+            source_metadata_sha256=metadata_sha256,
+            source_release=cls.RELEASE,
+        )
+
     def test_split_ids_and_csv_hashes_ignore_input_row_order(self) -> None:
         metadata = self._metadata()
         first = construct_splits(metadata, "a" * 64)
@@ -325,8 +332,8 @@ class SplitContractTests(unittest.TestCase):
                 f"{name} ordering depends on input row order",
             )
         with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right:
-            persist_splits(first, left)
-            persist_splits(replay, right)
+            self._persist(first, left, metadata, "a" * 64)
+            self._persist(replay, right, shuffled, "a" * 64)
             for name in first:
                 left_path = Path(left) / f"waterbirds100_{name}.csv"
                 right_path = Path(right) / f"waterbirds100_{name}.csv"
@@ -344,11 +351,66 @@ class SplitContractTests(unittest.TestCase):
         for name in ("candidate_train", "biased_val", "expert_train", "expert_calibration"):
             self.assertTrue((splits[name]["y"] == splits[name]["place"]).all())
 
+    def test_all_official_train_rows_are_used_and_misalignment_is_fatal(self) -> None:
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "f" * 64)
+        expected = set(metadata.loc[metadata["split"] == 0, "img_id"].astype(int))
+        observed = set(splits["candidate_train"]["img_id"].astype(int)) | set(
+            splits["biased_val"]["img_id"].astype(int)
+        )
+        self.assertEqual(observed, expected)
+
+        corrupted = metadata.copy()
+        train_index = corrupted.index[corrupted["split"] == 0][0]
+        corrupted.loc[train_index, "place"] = 1 - int(
+            corrupted.loc[train_index, "y"]
+        )
+        with self.assertRaisesRegex(
+            PreflightError, "source training split is not completely correlated"
+        ):
+            construct_splits(corrupted, "f" * 64)
+
+        for missing_split in (1, 2):
+            with self.subTest(missing_split=missing_split), self.assertRaisesRegex(
+                PreflightError, "must all be nonempty"
+            ):
+                construct_splits(
+                    metadata.loc[metadata["split"] != missing_split].copy(),
+                    "f" * 64,
+                )
+
+    def test_split_manifest_rejects_incomplete_source_membership(self) -> None:
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "9" * 64)
+        extra = metadata.iloc[[0]].copy()
+        extra["img_id"] = int(metadata["img_id"].max()) + 1
+        expanded_source = pd.concat([metadata, extra], ignore_index=True)
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            PreflightError, "complete official membership"
+        ):
+            self._persist(
+                splits,
+                temporary,
+                expanded_source,
+                "9" * 64,
+            )
+
     def test_persisted_manifest_records_overlap_union_and_alignment_assertions(self) -> None:
-        splits = construct_splits(self._metadata(), "e" * 64)
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "e" * 64)
         with tempfile.TemporaryDirectory() as temporary:
-            manifest = persist_splits(splits, temporary)
-        self.assertEqual(manifest["schema_version"], "anchorcal-splits-v2")
+            manifest = self._persist(splits, temporary, metadata, "e" * 64)
+        self.assertEqual(manifest["schema_version"], "anchorcal-splits-v3")
+        self.assertEqual(manifest["source_release"], self.RELEASE)
+        self.assertEqual(manifest["source_metadata_sha256"], "e" * 64)
+        membership = manifest["official_membership"]
+        self.assertEqual(membership["train"]["rows"], 160)
+        self.assertEqual(membership["oracle_val"]["rows"], 12)
+        self.assertEqual(membership["test"]["rows"], 12)
+        self.assertTrue(membership["train"]["complete_membership_verified"])
+        self.assertTrue(membership["train"]["all_y_equal_place"])
+        for summary in membership.values():
+            self.assertRegex(summary["img_ids_sha256"], r"^[0-9a-f]{64}$")
         assertions = manifest["contract_assertions"]
         self.assertTrue(assertions["all_passed"])
         self.assertEqual(
@@ -366,16 +428,17 @@ class SplitContractTests(unittest.TestCase):
         self.assertTrue(assertions["waterbirds100_alignment"]["passed"])
 
     def test_persisted_splits_are_create_once_and_exact_replays_are_noops(self) -> None:
-        splits = construct_splits(self._metadata(), "c" * 64)
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "c" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            first = persist_splits(splits, root)
+            first = self._persist(splits, root, metadata, "c" * 64)
             before = {
                 path.name: sha256_file(path)
                 for path in root.iterdir()
                 if path.is_file()
             }
-            replay = persist_splits(splits, root)
+            replay = self._persist(splits, root, metadata, "c" * 64)
             after = {
                 path.name: sha256_file(path)
                 for path in root.iterdir()
@@ -386,29 +449,31 @@ class SplitContractTests(unittest.TestCase):
             self.assertFalse(any(path.name.endswith(".tmp") for path in root.iterdir()))
 
     def test_persisted_split_csv_tampering_fails_instead_of_overwriting(self) -> None:
-        splits = construct_splits(self._metadata(), "d" * 64)
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "d" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            persist_splits(splits, root)
+            self._persist(splits, root, metadata, "d" * 64)
             target = root / "waterbirds100_candidate_train.csv"
             target.write_text("tampered\n", encoding="utf-8")
             with self.assertRaisesRegex(
                 PreflightError, "refusing to overwrite nonidentical"
             ):
-                persist_splits(splits, root)
+                self._persist(splits, root, metadata, "d" * 64)
             self.assertEqual(target.read_text(encoding="utf-8"), "tampered\n")
 
     def test_persisted_split_manifest_tampering_fails_instead_of_overwriting(self) -> None:
-        splits = construct_splits(self._metadata(), "e" * 64)
+        metadata = self._metadata()
+        splits = construct_splits(metadata, "e" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            persist_splits(splits, root)
+            self._persist(splits, root, metadata, "e" * 64)
             target = root / "manifest.json"
             target.write_text("{}\n", encoding="utf-8")
             with self.assertRaisesRegex(
                 PreflightError, "refusing to overwrite nonidentical"
             ):
-                persist_splits(splits, root)
+                self._persist(splits, root, metadata, "e" * 64)
             self.assertEqual(target.read_text(encoding="utf-8"), "{}\n")
 
 

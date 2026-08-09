@@ -22,6 +22,10 @@ die() {
   exit 2
 }
 
+progress() {
+  printf '[AnchorCal submit] %s\n' "$*" >&2
+}
+
 sha256_of() {
   local digest ignored
   read -r digest ignored < <(sha256sum -- "$1")
@@ -87,9 +91,9 @@ for key in required:
         raise SystemExit(f"paths.{key} is not absolute: {value}")
 fixed = {
     "repo_root": "/home/ryreu/guided_cnn/BirdOnly",
-    "waterbirds_root": "/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2",
-    "metadata_path": "/home/ryreu/guided_cnn/waterbirds/waterbird_complete95_forest2water2/metadata.csv",
-    "vlm_mask_root": "/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds95_openclip_laion_dinovit/val/prediction_cmap",
+    "waterbirds_root": "/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2",
+    "metadata_path": "/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv",
+    "vlm_mask_root": "/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap",
     "output_root": "/home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot",
     "hf_home": "/home/ryreu/.cache/huggingface",
 }
@@ -150,6 +154,115 @@ campaign_id="$(date -u +%Y%m%dT%H%M%SZ)_${BASHPID}"
 manifest_dir="$OUTPUT_ROOT/manifests/campaign_${campaign_id}"
 mkdir -- "$manifest_dir"
 
+# Install cleanup before writing any frozen input.  An interrupt during input
+# freezing must not leave a directory under manifests/ that blocks a safe
+# retry.  Before the first sbatch, preserve that directory in the recoverable
+# aborted-manifests archive.  After any sbatch, retain it in place because
+# queued jobs may already refer to its paths while cancellation propagates.
+submitted_jobs=()
+LAST_JOB_ID=
+scheduler_submission_attempted=false
+submission_phase=freezing_inputs
+INPUT_RECEIPT=
+input_receipt_sha256=
+PARTIAL_MANIFEST_ARCHIVE=not_applicable
+
+write_partial_receipt() {
+  local status=$1
+  local reason=${2:-error}
+  local partial="$OUTPUT_ROOT/submission_receipts/campaign_${campaign_id}_${status}.txt"
+  {
+    printf 'schema_version=anchorcal-tigris-submission-v1\n'
+    printf 'status=%s\n' "$status"
+    printf 'created_at=%s\n' "$(date --iso-8601=seconds)"
+    printf 'campaign_id=%s\n' "$campaign_id"
+    printf 'expected_commit=%s\n' "$ANCHORCAL_EXPECTED_COMMIT"
+    printf 'interruption_reason=%s\n' "$reason"
+    printf 'submission_phase=%s\n' "$submission_phase"
+    printf 'frozen_input_receipt=%s\n' "${INPUT_RECEIPT:-not_created}"
+    printf 'frozen_input_receipt_sha256=%s\n' "${input_receipt_sha256:-not_created}"
+    printf 'submitted_job_ids=%s\n' "${submitted_jobs[*]:-none}"
+    printf 'scheduler_submission_attempted=%s\n' "$scheduler_submission_attempted"
+    printf 'rollback_status=%s\n' "${ROLLBACK_STATUS:-not_attempted}"
+    printf 'partial_manifest_archive=%s\n' "$PARTIAL_MANIFEST_ARCHIVE"
+  } > "$partial"
+  local digest
+  digest=$(sha256_of "$partial")
+  printf '%s  %s\n' "$digest" "$(basename -- "$partial")" > "${partial}.sha256"
+}
+
+archive_presubmission_manifest() {
+  PARTIAL_MANIFEST_ARCHIVE=not_present
+  [[ -d "$manifest_dir" ]] || return 0
+  [[ "$(dirname -- "$manifest_dir")" == "$OUTPUT_ROOT/manifests" ]] || {
+    echo "Refusing to archive unexpected partial-manifest path: ${manifest_dir}" >&2
+    return 1
+  }
+  [[ "$(basename -- "$manifest_dir")" == campaign_* ]] || {
+    echo "Refusing to archive unexpected partial-manifest name: ${manifest_dir}" >&2
+    return 1
+  }
+  local archive_root="$OUTPUT_ROOT/submission_receipts/aborted_manifests"
+  local archive_target="$archive_root/$(basename -- "$manifest_dir")"
+  mkdir -p -- "$archive_root"
+  [[ ! -e "$archive_target" ]] || {
+    echo "Partial-manifest archive target already exists: ${archive_target}" >&2
+    return 1
+  }
+  mv -- "$manifest_dir" "$archive_target"
+  PARTIAL_MANIFEST_ARCHIVE=$archive_target
+}
+
+handle_submission_failure() {
+  local status=$1
+  local reason=$2
+  trap - ERR INT TERM
+  set +e
+  ROLLBACK_STATUS=not_needed
+  if (( ${#submitted_jobs[@]} )); then
+    if scancel "${submitted_jobs[@]}"; then
+      ROLLBACK_STATUS=scancel_requested
+    else
+      ROLLBACK_STATUS=scancel_failed
+    fi
+    PARTIAL_MANIFEST_ARCHIVE=preserved_for_submitted_jobs
+  elif [[ "$scheduler_submission_attempted" == true ]]; then
+    # A scheduler response can be lost or malformed after Slurm accepted the
+    # request.  With no trustworthy job ID, do not move the manifest that an
+    # unobserved job may reference; require a manual queue audit instead.
+    ROLLBACK_STATUS=unknown_job_id_manual_scheduler_check_required
+    PARTIAL_MANIFEST_ARCHIVE=preserved_after_scheduler_attempt
+  else
+    if archive_presubmission_manifest; then
+      ROLLBACK_STATUS=no_jobs_submitted_manifest_archived
+    else
+      ROLLBACK_STATUS=no_jobs_submitted_manifest_archive_failed
+    fi
+  fi
+  write_partial_receipt submission_interrupted "$reason"
+  echo "Submission stopped during ${submission_phase}; jobs=${submitted_jobs[*]:-none}; rollback=${ROLLBACK_STATUS}" >&2
+  exit "$status"
+}
+
+handle_submission_error() {
+  local status=$?
+  handle_submission_failure "$status" error
+}
+
+handle_submission_signal() {
+  local signal=$1
+  local status=1
+  case "$signal" in
+    INT) status=130 ;;
+    TERM) status=143 ;;
+  esac
+  handle_submission_failure "$status" "signal_${signal}"
+}
+
+trap handle_submission_error ERR
+trap 'handle_submission_signal INT' INT
+trap 'handle_submission_signal TERM' TERM
+
 CONFIG_FROZEN="$manifest_dir/pilot.yaml"
 PATHS_FROZEN="$manifest_dir/paths.local.yaml"
 PACKAGE_LOCK="$manifest_dir/package-lock.txt"
@@ -157,6 +270,7 @@ ENVIRONMENT_RECEIPT="$manifest_dir/environment.txt"
 CANDIDATE_GRID="$manifest_dir/candidate-grid.tsv"
 INPUT_RECEIPT="$manifest_dir/frozen-inputs.txt"
 
+progress "freezing campaign inputs in ${manifest_dir}"
 "$ANCHORCAL_PYTHON" -c 'import pathlib, sys, yaml
 source, target, interpreter = map(pathlib.Path, sys.argv[1:])
 payload = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -165,13 +279,10 @@ target.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 ' "$CONFIG_SOURCE" "$CONFIG_FROZEN" "$ANCHORCAL_PYTHON"
 cp -- "$PATHS_SOURCE" "$PATHS_FROZEN"
 
-"$ANCHORCAL_PYTHON" -c 'from importlib import metadata
-rows = {
-    "{}=={}".format(dist.metadata["Name"], dist.version)
-    for dist in metadata.distributions()
-    if dist.metadata.get("Name")
-}
-print("\n".join(sorted(rows, key=str.casefold)))' > "$PACKAGE_LOCK"
+progress "recording locked AnchorCal package versions"
+"$ANCHORCAL_PYTHON" -c 'import sys
+from anchorcal.runtime import write_package_lock
+write_package_lock(sys.argv[1])' "$PACKAGE_LOCK"
 
 python_sha256=$(sha256_of "$ANCHORCAL_PYTHON")
 {
@@ -235,6 +346,7 @@ input_receipt_sha256=$(sha256_of "$INPUT_RECEIPT")
 printf '%s  %s\n' "$input_receipt_sha256" "$(basename -- "$INPUT_RECEIPT")" \
   > "${INPUT_RECEIPT}.sha256"
 chmod 0444 -- "$manifest_dir"/*
+submission_phase=submitting_jobs
 
 export ANCHORCAL_REPO="$REPO"
 export ANCHORCAL_EXPECTED_COMMIT
@@ -255,10 +367,11 @@ export ANCHORCAL_INPUT_RECEIPT="$INPUT_RECEIPT"
 export ANCHORCAL_INPUT_RECEIPT_SHA256="$input_receipt_sha256"
 unset ANCHORCAL_LEARNING_RATE ANCHORCAL_WEIGHT_DECAY ANCHORCAL_CANDIDATE_TAG
 
-submitted_jobs=()
-LAST_JOB_ID=
 submit_job() {
-  local raw
+  local raw batch_file
+  batch_file=${!#}
+  progress "submitting $(basename -- "$batch_file")"
+  scheduler_submission_attempted=true
   if ! raw=$(sbatch --parsable --export=ALL "$@"); then
     echo "sbatch failed for: $*" >&2
     return 1
@@ -269,42 +382,8 @@ submit_job() {
     return 2
   fi
   submitted_jobs+=("$LAST_JOB_ID")
+  progress "submitted job ${LAST_JOB_ID} from $(basename -- "$batch_file")"
 }
-
-write_partial_receipt() {
-  local status=$1
-  local partial="$OUTPUT_ROOT/submission_receipts/campaign_${campaign_id}_${status}.txt"
-  {
-    printf 'schema_version=anchorcal-tigris-submission-v1\n'
-    printf 'status=%s\n' "$status"
-    printf 'created_at=%s\n' "$(date --iso-8601=seconds)"
-    printf 'campaign_id=%s\n' "$campaign_id"
-    printf 'expected_commit=%s\n' "$ANCHORCAL_EXPECTED_COMMIT"
-    printf 'frozen_input_receipt=%s\n' "$INPUT_RECEIPT"
-    printf 'frozen_input_receipt_sha256=%s\n' "$input_receipt_sha256"
-    printf 'submitted_job_ids=%s\n' "${submitted_jobs[*]:-none}"
-    printf 'rollback_status=%s\n' "${ROLLBACK_STATUS:-not_attempted}"
-  } > "$partial"
-  local digest
-  digest=$(sha256_of "$partial")
-  printf '%s  %s\n' "$digest" "$(basename -- "$partial")" > "${partial}.sha256"
-}
-handle_submission_error() {
-  local status=$?
-  trap - ERR
-  ROLLBACK_STATUS=not_needed
-  if (( ${#submitted_jobs[@]} )); then
-    if scancel "${submitted_jobs[@]}"; then
-      ROLLBACK_STATUS=scancel_requested
-    else
-      ROLLBACK_STATUS=scancel_failed
-    fi
-  fi
-  write_partial_receipt submission_interrupted
-  echo "Submission stopped after jobs: ${submitted_jobs[*]:-none}; rollback=${ROLLBACK_STATUS}" >&2
-  exit "$status"
-}
-trap handle_submission_error ERR
 
 submit_job "$REPO/slurm/anchorcal/preflight.sbatch"
 preflight_id=$LAST_JOB_ID
@@ -365,7 +444,8 @@ submission_sha256=$(sha256_of "$submission_receipt")
 printf '%s  %s\n' "$submission_sha256" "$(basename -- "$submission_receipt")" \
   > "${submission_receipt}.sha256"
 chmod 0444 -- "$submission_receipt" "${submission_receipt}.sha256"
-trap - ERR
+submission_phase=complete
+trap - ERR INT TERM
 
 echo "Submitted AnchorCal campaign ${campaign_id} at commit ${ANCHORCAL_EXPECTED_COMMIT}"
 echo "preflight=${preflight_id} debug=${debug_id} foreground=${foreground_id} background=${background_id} anchors=${anchors_id}"
