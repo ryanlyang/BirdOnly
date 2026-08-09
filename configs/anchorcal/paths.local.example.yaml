@@ -1,0 +1,8 @@
+paths:
+  repo_root: /home/ryreu/guided_cnn/BirdOnly
+  waterbirds_root: REQUIRED_ABSOLUTE_PATH
+  metadata_path: REQUIRED_ABSOLUTE_PATH
+  cub_source_segmentation_root: REQUIRED_ABSOLUTE_PATH
+  cub_waterbirds_mask_root: REQUIRED_ABSOLUTE_PATH
+  hf_home: /home/ryreu/.cache/huggingface
+  output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot

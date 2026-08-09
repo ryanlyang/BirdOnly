@@ -19,3 +19,7 @@ submission_receipts/
 *.ckpt
 *.npz
 
+# Machine-local AnchorCal paths and runtime lock files.
+configs/anchorcal/paths.local.yaml
+*.partial.h5
+*.h5.lock

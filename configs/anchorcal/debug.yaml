@@ -1,0 +1,20 @@
+runtime:
+  debug: true
+branches:
+  frozen_epoch: 3
+  epochs: 3
+  background_eval_views: 2
+anchorcal:
+  lambdas: [0.0, 0.25, 0.5, 0.75, 1.0]
+  parity_lambdas: [0.0, 0.25, 0.5, 0.75, 1.0]
+  bootstrap_replicates: 20
+  final_metric_bootstrap_replicates: 20
+candidate_grid:
+  learning_rates: [3.0e-5]
+  weight_decays: [0.05]
+  epochs: 3
+criteria:
+  selector_eval_total: 64
+  selector_eval_per_class: 32
+  swap_donors: 2
+  blur_sigmas: [4]

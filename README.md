@@ -1,4 +1,25 @@
-# SETV Waterbirds95
+# AnchorCal Waterbirds100 pilot
+
+The active research implementation is the independent `anchorcal` package.
+It builds controlled foreground-reliance anchors, uses them to select one of
+four practical validation criteria, and evaluates that frozen choice on a
+six-run ordinary ViT candidate grid. The binding documents are
+`AnchorCal_Waterbirds100_Pilot_Implementation_Plan.md` and
+`AnchorCal_Implementation_Decision_Locks_Answers.md`; later locks take
+precedence.
+
+Copy `configs/anchorcal/paths.local.example.yaml` to the ignored
+`configs/anchorcal/paths.local.yaml`, fill the four audited data/mask paths,
+then use `scripts/anchorcal/submit_campaign.sh` from a clean committed TIGRIS
+checkout. See `docs/anchorcal/TIGRIS_RUNBOOK.md` and the implementation
+traceability log for the exact workflow.
+
+The existing `setv` package below is retained for historical reproducibility;
+AnchorCal does not import its expert, selector, or fusion logic.
+
+---
+
+# SETV Waterbirds95 (historical)
 
 This repository implements Spatial Evidence-Tilted Validation (SETV) for the
 private Waterbirds95 pilot.
