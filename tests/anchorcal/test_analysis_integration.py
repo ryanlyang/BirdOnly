@@ -321,6 +321,7 @@ class AnalysisIntegrationTests(unittest.TestCase):
         mask_manifest_payload = {
                 "schema_version": VLM_MASK_MANIFEST_SCHEMA,
                 "status": "passed",
+                "git_commit": "d" * 40,
                 "dataset_root": str(self.waterbirds_root.resolve()),
                 "metadata_path": str(self.metadata_path.resolve()),
                 "metadata_sha256": sha256_file(self.metadata_path),

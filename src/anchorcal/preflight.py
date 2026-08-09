@@ -47,6 +47,7 @@ from .vlm_masks import (
     VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS,
     decode_vlm_mask,
     foreground_area_summary,
+    load_preflight_geometry_mask_bank,
     producer_vlm_mask_name,
     resolve_teacher_map,
     teacher_map_candidates,
@@ -537,6 +538,12 @@ def run_preflight(
     preflight_dir = output / "preflight"
     splits_dir = output / "splits"
     environment_dir = output / "environment"
+    final_report_path = preflight_dir / "report.json"
+    if final_report_path.exists():
+        raise PreflightError(
+            "preflight refuses to overwrite an existing finalized report: "
+            f"{final_report_path}"
+        )
     preflight_dir.mkdir(parents=True, exist_ok=True)
     storage_budget = assess_storage_budget(
         config,
@@ -638,8 +645,11 @@ def run_preflight(
     preprocessing = preprocessing_from_manifest(preprocessing_manifest)
     # This first production consumer receives the timm-derived values directly;
     # subsequent jobs reload and hash-check this same serialized manifest.
+    preflight_mask_bank = load_preflight_geometry_mask_bank(config)
     geometry_manifest = prepare_geometry_artifacts(
-        config, preprocessing=preprocessing
+        config,
+        preprocessing=preprocessing,
+        mask_bank=preflight_mask_bank,
     )
     atomic_write_yaml(preflight_dir / "resolved_config.yaml", config)
     report = {
@@ -678,5 +688,5 @@ def run_preflight(
         "git": repo_state,
         "resolved_config_sha256": config["resolved_config_sha256"],
     }
-    atomic_write_json(preflight_dir / "report.json", report)
+    atomic_write_json(final_report_path, report)
     return report

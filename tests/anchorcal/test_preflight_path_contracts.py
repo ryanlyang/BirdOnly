@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import DEFAULT, patch
 
 import numpy as np
 from PIL import Image
@@ -21,10 +23,13 @@ from anchorcal.errors import PreflightError  # noqa: E402
 from anchorcal.io import atomic_write_json, hash_object, sha256_file  # noqa: E402
 from anchorcal.mask_identity import SELECTOR_MASK_RECEIPT_SCHEMA  # noqa: E402
 from anchorcal.paths import discover_candidates  # noqa: E402
+from anchorcal.prepare import prepare_geometry_artifacts  # noqa: E402
 from anchorcal.preflight import (  # noqa: E402
+    run_preflight,
     validate_images_and_masks,
     validate_release,
 )
+from anchorcal.preprocessing import EvaluationPreprocessing  # noqa: E402
 from anchorcal.vlm_masks import (  # noqa: E402
     ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
     ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
@@ -34,6 +39,7 @@ from anchorcal.vlm_masks import (  # noqa: E402
     VLM_PRODUCER,
     decode_vlm_mask,
     load_analysis_only_mask_audit,
+    load_preflight_geometry_mask_bank,
     load_vlm_mask_bank,
     producer_vlm_mask_name,
     teacher_map_candidates,
@@ -141,11 +147,14 @@ class PreflightPathContractTests(unittest.TestCase):
         )
         return manifest, metadata_hash
 
-    def _freeze_manifest(self, manifest: dict[str, object]) -> Path:
+    def _freeze_manifest(
+        self, manifest: dict[str, object], *, include_report: bool = True
+    ) -> Path:
         preflight = self.output_root / "preflight"
         preflight.mkdir(parents=True, exist_ok=True)
         path = preflight / "mask_manifest.json"
         manifest = copy.deepcopy(manifest)
+        manifest["git_commit"] = "deadbeef"
         visual_audit = attach_synthetic_visual_audit(self.output_root, manifest)
         manifest["visual_audit"] = visual_audit
         atomic_write_json(path, manifest)
@@ -176,28 +185,31 @@ class PreflightPathContractTests(unittest.TestCase):
         }
         selector_receipt_path = preflight / "selector_mask_receipt.json"
         atomic_write_json(selector_receipt_path, selector_receipt)
-        atomic_write_json(
-            preflight / "report.json",
-            {
-                "schema_version": "anchorcal-preflight-v1",
-                "status": "passed",
-                "resolved_config_sha256": self._config()[
-                    "resolved_config_sha256"
-                ],
-                "resolved_paths": self._config()["paths"],
-                "metadata_sha256": manifest["metadata_sha256"],
-                "mask_source": VLM_PRODUCER,
-                "mask_contract_sha256": manifest["mask_contract_sha256"],
-                "mask_bank_sha256": manifest["mask_bank_sha256"],
-                "foreground_area_summary": manifest["foreground_area_summary"],
-                "mask_visual_audit": visual_audit,
-                "mask_manifest_sha256": sha256_file(path),
-                "selector_mask_receipt": {
-                    "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
-                    "sha256": sha256_file(selector_receipt_path),
+        if include_report:
+            atomic_write_json(
+                preflight / "report.json",
+                {
+                    "schema_version": "anchorcal-preflight-v1",
+                    "status": "passed",
+                    "resolved_config_sha256": self._config()[
+                        "resolved_config_sha256"
+                    ],
+                    "resolved_paths": self._config()["paths"],
+                    "metadata_sha256": manifest["metadata_sha256"],
+                    "mask_source": VLM_PRODUCER,
+                    "mask_contract_sha256": manifest["mask_contract_sha256"],
+                    "mask_bank_sha256": manifest["mask_bank_sha256"],
+                    "foreground_area_summary": manifest[
+                        "foreground_area_summary"
+                    ],
+                    "mask_visual_audit": visual_audit,
+                    "mask_manifest_sha256": sha256_file(path),
+                    "selector_mask_receipt": {
+                        "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+                        "sha256": sha256_file(selector_receipt_path),
+                    },
                 },
-            },
-        )
+            )
         return path
 
     def test_producer_name_uses_the_complete_relative_path(self) -> None:
@@ -595,6 +607,193 @@ class PreflightPathContractTests(unittest.TestCase):
         atomic_write_json(manifest_path, malformed)
         with self.assertRaisesRegex(PreflightError, "entry is malformed"):
             load_vlm_mask_bank(config)
+
+    def test_geometry_bootstrap_breaks_the_final_report_dependency_cycle(self) -> None:
+        manifest, _ = self._validate()
+        self._freeze_manifest(manifest, include_report=False)
+        config = self._config()
+
+        with self.assertRaisesRegex(PreflightError, "finalized preflight report"):
+            load_vlm_mask_bank(config)
+
+        bank = load_preflight_geometry_mask_bank(config)
+        self.assertEqual(sorted(bank.entries), [17])
+        preprocessing = EvaluationPreprocessing(
+            input_size=(3, 224, 224),
+            interpolation="bicubic",
+            antialias=True,
+            crop_pct=0.9,
+            crop_mode="center",
+            mean=(0.5, 0.5, 0.5),
+            std=(0.5, 0.5, 0.5),
+            effective_resize_shortest=248,
+        )
+        with patch(
+            "anchorcal.prepare.load_vlm_mask_bank",
+            side_effect=AssertionError("strict loader must not run"),
+        ) as strict_loader:
+            with self.assertRaisesRegex(
+                FileNotFoundError, "preflight split is missing"
+            ):
+                prepare_geometry_artifacts(
+                    config,
+                    preprocessing=preprocessing,
+                    mask_bank=bank,
+                )
+        strict_loader.assert_not_called()
+
+        self._freeze_manifest(manifest)
+        self.assertEqual(sorted(load_vlm_mask_bank(config).entries), [17])
+        with self.assertRaisesRegex(
+            PreflightError, "cannot replace a finalized report"
+        ):
+            load_preflight_geometry_mask_bank(config)
+
+    def test_geometry_bootstrap_still_rejects_tampered_visual_artifacts(self) -> None:
+        manifest, _ = self._validate()
+        manifest_path = self._freeze_manifest(manifest, include_report=False)
+        frozen = json.loads(manifest_path.read_text(encoding="utf-8"))
+        page_relative = frozen["visual_audit"]["pages"][0]["relative_path"]
+        (self.output_root / page_relative).write_bytes(b"tampered")
+
+        with self.assertRaisesRegex(
+            PreflightError, "visual-audit page failed provenance verification"
+        ):
+            load_preflight_geometry_mask_bank(self._config())
+
+    def test_run_preflight_injects_the_staged_bank_before_finalizing_report(
+        self,
+    ) -> None:
+        config = self._config()
+        config["paths"].update(
+            {
+                "repo_root": str(self.temporary_root),
+                "fcv_split_manifest_root": str(
+                    self.temporary_root / "fcv_split_manifests"
+                ),
+                "hf_home": str(self.temporary_root / "hf_home"),
+            }
+        )
+        config["data"].update(
+            {
+                "release": self.RELEASE,
+                "fcv_reference": {},
+                "expert_calibration_seed": 1729,
+                "protected_split_root": "analysis_only/splits",
+            }
+        )
+        metadata_sha256 = "1" * 64
+        mask_manifest = {
+            "mask_contract_sha256": "2" * 64,
+            "mask_bank_sha256": "3" * 64,
+            "foreground_area_summary": {"count": 1},
+        }
+        visual_receipt = {
+            "manifest_sha256": "4" * 64,
+            "selection_sha256": "5" * 64,
+        }
+        preprocessing_manifest = {"parity": {"status": "passed"}}
+        resolved_preprocessing = SimpleNamespace(effective_resize_shortest=248)
+        staged_bank = object()
+        events: list[tuple[str, object | None]] = []
+
+        with patch.multiple(
+            "anchorcal.preflight",
+            assess_storage_budget=DEFAULT,
+            git_state=DEFAULT,
+            save_environment_manifest=DEFAULT,
+            write_package_lock=DEFAULT,
+            validate_release=DEFAULT,
+            validate_images_and_masks=DEFAULT,
+            render_mask_visual_audit=DEFAULT,
+            construct_splits=DEFAULT,
+            persist_splits=DEFAULT,
+            resolve_snapshot=DEFAULT,
+            resolve_preprocessing_manifest=DEFAULT,
+            write_preprocessing_manifest=DEFAULT,
+            preprocessing_from_manifest=DEFAULT,
+            load_preflight_geometry_mask_bank=DEFAULT,
+            prepare_geometry_artifacts=DEFAULT,
+        ) as mocked:
+            mocked["assess_storage_budget"].return_value = {"status": "passed"}
+            mocked["git_state"].return_value = {
+                "commit": "deadbeef",
+                "clean": True,
+            }
+            mocked["save_environment_manifest"].return_value = {
+                "status": "passed"
+            }
+            mocked["validate_release"].return_value = ([object()], metadata_sha256)
+            mocked["validate_images_and_masks"].return_value = mask_manifest
+            mocked["render_mask_visual_audit"].return_value = visual_receipt
+            mocked["construct_splits"].return_value = object()
+            mocked["persist_splits"].return_value = {"status": "passed"}
+            mocked["resolve_snapshot"].return_value = {"status": "passed"}
+            mocked[
+                "resolve_preprocessing_manifest"
+            ].return_value = preprocessing_manifest
+            mocked["write_preprocessing_manifest"].side_effect = (
+                lambda path, payload: atomic_write_json(path, payload)
+            )
+            mocked[
+                "preprocessing_from_manifest"
+            ].return_value = resolved_preprocessing
+
+            def stage_bank(_: object) -> object:
+                events.append(("stage", staged_bank))
+                return staged_bank
+
+            def prepare_geometry(
+                _: object, *, preprocessing: object, mask_bank: object
+            ) -> dict[str, object]:
+                self.assertIs(preprocessing, resolved_preprocessing)
+                self.assertIs(mask_bank, staged_bank)
+                events.append(("geometry", mask_bank))
+                return {"status": "passed"}
+
+            mocked["load_preflight_geometry_mask_bank"].side_effect = stage_bank
+            mocked["prepare_geometry_artifacts"].side_effect = prepare_geometry
+
+            report = run_preflight(
+                config,
+                allow_download=False,
+                require_gh200=False,
+            )
+
+        self.assertEqual(
+            events,
+            [("stage", staged_bank), ("geometry", staged_bank)],
+        )
+        self.assertEqual(report["status"], "passed")
+        self.assertTrue((self.output_root / "preflight" / "report.json").is_file())
+
+    def test_run_preflight_refuses_existing_report_before_any_output_mutation(
+        self,
+    ) -> None:
+        report_path = self.output_root / "preflight" / "report.json"
+        report_path.parent.mkdir(parents=True)
+        sentinel = b'{"status":"existing"}\n'
+        report_path.write_bytes(sentinel)
+
+        with patch("anchorcal.preflight.assess_storage_budget") as storage_gate:
+            with self.assertRaisesRegex(
+                PreflightError, "refuses to overwrite an existing finalized report"
+            ):
+                run_preflight(
+                    self._config(),
+                    allow_download=False,
+                    require_gh200=False,
+                )
+
+        storage_gate.assert_not_called()
+        self.assertEqual(report_path.read_bytes(), sentinel)
+        self.assertEqual(
+            sorted(
+                path.relative_to(self.output_root).as_posix()
+                for path in self.output_root.rglob("*")
+            ),
+            ["preflight", "preflight/report.json"],
+        )
 
     def test_debug_reuses_only_a_matching_production_mask_contract(self) -> None:
         manifest, _ = self._validate()

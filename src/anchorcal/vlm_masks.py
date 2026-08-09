@@ -22,6 +22,7 @@ from .data import image_path, load_metadata
 from .errors import PreflightError
 from .io import hash_object, sha256_bytes, sha256_file
 from .mask_identity import (
+    SELECTOR_MASK_RECEIPT_SCHEMA,
     VLM_MASK_MANIFEST_SCHEMA,
     VLM_PRODUCER,
     vlm_mask_contract_hash,
@@ -580,13 +581,17 @@ def _validate_frozen_entries(
     return entries, split_counts
 
 
-def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
+def _load_vlm_mask_bank(
+    config: Mapping[str, Any], *, require_finalized_report: bool
+) -> VlmMaskBank:
     output = Path(str(config["paths"]["output_root"]))
     manifest_path = output / "preflight" / "mask_manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise PreflightError(f"invalid frozen VLM mask manifest: {manifest_path}") from error
+    if not isinstance(manifest, dict):
+        raise PreflightError("frozen VLM mask manifest must be a JSON mapping")
     root = Path(str(config["paths"]["vlm_mask_root"])).resolve()
     if not root.is_dir():
         raise PreflightError(f"frozen VLM mask root is missing: {root}")
@@ -675,6 +680,38 @@ def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
     )
     if manifest.get("mask_bank_sha256") != bank_hash:
         raise PreflightError("frozen VLM mask-bank hash is invalid")
+    visual_receipt = manifest.get("visual_audit")
+    if not isinstance(visual_receipt, dict):
+        raise PreflightError("mask manifest v3 requires a visual-audit receipt")
+
+    # The compact selector receipt is produced before geometry and therefore
+    # forms part of the acyclic preflight-staging identity.  Cross-check every
+    # aggregate value here so the bootstrap path is not weaker than the final
+    # report-bound path used by all later workers.
+    from .candidate_provenance import load_candidate_preflight_binding
+
+    selector_receipt = load_candidate_preflight_binding(config)
+    manifest_sha256 = sha256_file(manifest_path)
+    if (
+        selector_receipt.get("resolved_config_sha256")
+        != manifest.get("resolved_config_sha256")
+        or selector_receipt.get("metadata_sha256")
+        != manifest.get("metadata_sha256")
+        or selector_receipt.get("git_commit") != manifest.get("git_commit")
+        or selector_receipt.get("mask_source") != VLM_PRODUCER
+        or selector_receipt.get("mask_contract_sha256") != contract_hash
+        or selector_receipt.get("mask_bank_sha256") != bank_hash
+        or selector_receipt.get("mask_manifest_sha256") != manifest_sha256
+        or selector_receipt.get("foreground_area_summary_sha256")
+        != hash_object(manifest.get("foreground_area_summary"))
+        or selector_receipt.get("mask_visual_audit_manifest_sha256")
+        != visual_receipt.get("manifest_sha256")
+        or selector_receipt.get("mask_visual_audit_selection_sha256")
+        != visual_receipt.get("selection_sha256")
+    ):
+        raise PreflightError(
+            "selector-safe mask receipt does not bind the frozen VLM manifest"
+        )
     report_path = output / "preflight" / "report.json"
     report: dict[str, Any] | None = None
     if report_path.is_file():
@@ -682,9 +719,17 @@ def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise PreflightError(f"invalid preflight report: {report_path}") from error
+        if not isinstance(report, dict):
+            raise PreflightError("preflight report must be a JSON mapping")
+        if not require_finalized_report:
+            raise PreflightError(
+                "preflight geometry bootstrap cannot replace a finalized report"
+            )
         if (
-            report.get("mask_bank_sha256") != bank_hash
-            or report.get("mask_manifest_sha256") != sha256_file(manifest_path)
+            report.get("schema_version") != "anchorcal-preflight-v1"
+            or report.get("status") != "passed"
+            or report.get("mask_bank_sha256") != bank_hash
+            or report.get("mask_manifest_sha256") != manifest_sha256
             or report.get("mask_source") != VLM_PRODUCER
             or report.get("metadata_sha256") != manifest.get("metadata_sha256")
             or report.get("foreground_area_summary")
@@ -698,16 +743,26 @@ def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
                 != config["resolved_config_sha256"]
             )
             or report.get("resolved_paths") != config["paths"]
+            or report.get("selector_mask_receipt")
+            != {
+                "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+                "sha256": selector_receipt["_receipt_sha256"],
+            }
         ):
             raise PreflightError("preflight report does not bind the VLM manifest")
-    visual_receipt = manifest.get("visual_audit")
-    report_visual_receipt = (
-        report.get("mask_visual_audit") if isinstance(report, dict) else None
-    )
-    if visual_receipt is None or report_visual_receipt is None:
-        raise PreflightError("mask manifest v3 requires a visual-audit receipt")
-    if visual_receipt != report_visual_receipt:
-        raise PreflightError("mask visual-audit receipts differ")
+    if report is None:
+        if require_finalized_report:
+            raise PreflightError(
+                "finalized preflight report is required to load the VLM mask bank"
+            )
+    else:
+        report_visual_receipt = report.get("mask_visual_audit")
+        if report_visual_receipt is None:
+            raise PreflightError(
+                "preflight report requires a visual-audit receipt"
+            )
+        if visual_receipt != report_visual_receipt:
+            raise PreflightError("mask visual-audit receipts differ")
     # Local import avoids a module cycle: rendering imports this module's strict
     # VLM decoder, while runtime verification occurs only after both modules
     # have finished importing.
@@ -726,6 +781,33 @@ def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
         minimum_foreground_fraction=minimum,
         maximum_foreground_fraction=maximum,
     )
+
+
+def load_vlm_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
+    """Load a mask bank bound to the completed preflight report."""
+
+    return _load_vlm_mask_bank(config, require_finalized_report=True)
+
+
+def load_preflight_geometry_mask_bank(config: Mapping[str, Any]) -> VlmMaskBank:
+    """Verify the frozen mask bank while the final report awaits geometry.
+
+    ``preflight/report.json`` includes the geometry manifest, so requiring that
+    report while constructing geometry is a dependency cycle.  This narrowly
+    scoped bootstrap entry point still verifies every source image and mask,
+    the frozen bank hash, and the complete visual-audit receipt.  It refuses to
+    run after a finalized report exists; all later consumers use the strict
+    :func:`load_vlm_mask_bank` entry point above.
+    """
+
+    report_path = (
+        Path(str(config["paths"]["output_root"])) / "preflight" / "report.json"
+    )
+    if report_path.exists():
+        raise PreflightError(
+            "preflight geometry bootstrap cannot replace a finalized report"
+        )
+    return _load_vlm_mask_bank(config, require_finalized_report=False)
 
 
 def load_analysis_only_mask_audit(config: Mapping[str, Any]) -> dict[str, Any]:

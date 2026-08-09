@@ -93,6 +93,7 @@ def prepare_geometry_artifacts(
     config: dict[str, Any],
     *,
     preprocessing: EvaluationPreprocessing | None = None,
+    mask_bank: VlmMaskBank | None = None,
 ) -> dict[str, Any]:
     output = Path(config["paths"]["output_root"])
     if preprocessing is None:
@@ -101,7 +102,8 @@ def prepare_geometry_artifacts(
     artifact_root = geometry_artifact_root(config)
     artifact_root.mkdir(parents=True, exist_ok=True)
     image_root = Path(config["paths"]["waterbirds_root"])
-    mask_bank = load_vlm_mask_bank(config)
+    if mask_bank is None:
+        mask_bank = load_vlm_mask_bank(config)
     frames = {
         name: _read_split(splits_root, name)
         for name in ("expert_train", "expert_calibration", "biased_val")

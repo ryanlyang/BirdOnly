@@ -85,6 +85,17 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
 - Real Waterbirds/VLM coverage, the pinned model cache, and GH200 execution
   remain production preflight and smoke gates on TIGRIS; local fixtures do not
   claim that external runtime evidence.
+- On 2026-08-09, live TIGRIS preflight job `70443` exposed a deterministic
+  construction cycle: geometry was needed for final `preflight/report.json`,
+  while the geometry mask loader required that not-yet-written report. The
+  repair adds one preflight-only bootstrap loader that verifies the frozen
+  mask manifest, all source bytes, the compact selector receipt, and the full
+  visual-audit receipt before injecting the verified bank into geometry.
+  Every downstream consumer remains on the strict loader and must bind to a
+  finalized passed report. No dataset, mask, split, model, or scientific
+  decision changed. The repaired checkout passed **198 AnchorCal tests** and
+  all **81 retained SETV tests** (**279 total**), Python compilation, every
+  AnchorCal shell/Slurm syntax check, and `git diff --check`.
 
 ## Phase 0: specification and repository audit
 
