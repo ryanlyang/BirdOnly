@@ -29,12 +29,14 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   source identifier is
   `waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`.
   Public mask entries omit `metadata_index` and all context/group fields.
-- The latest incompatible split/privacy/visual-audit correction bumps the
+- The preceding incompatible split/privacy/visual-audit correction bumped the
   package to `0.5.0`, the resolved config to `anchorcal-config-v3`, the
   selector-safe split manifest to `anchorcal-splits-v4`, the protected split
   manifest to `anchorcal-analysis-only-splits-v1`, and the mask manifest to
-  `anchorcal-vlm-mask-manifest-v3`. Older campaign artifacts cannot satisfy the
-  current contracts.
+  `anchorcal-vlm-mask-manifest-v3`. That version record is retained as
+  historical evidence; the combined background-budget correction below
+  supersedes the active package/configuration contract with AnchorCal `0.6.0`
+  and `anchorcal-config-v4`. The split and mask schemas remain unchanged.
 - The development split now imports and hash-verifies the exact Waterbirds100
   FCV seed-0 membership from the established `split_manifests` bundle; it never
   regenerates a seed-1729 split. Selector-safe development/expert CSVs omit
@@ -96,6 +98,29 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   decision changed. The repaired checkout passed **198 AnchorCal tests** and
   all **81 retained SETV tests** (**279 total**), Python compilation, every
   AnchorCal shell/Slurm syntax check, and `git diff --check`.
+- On 2026-08-09, repaired TIGRIS preflight job `70471` completed, but it
+  selected `K=48` under the then-active 95-percent coverage-only rule. Debug
+  job `70472` subsequently failed the downstream overall `biased_val`
+  invalidity assertion: `K=48` invalidated 20 of 959 examples (2.0855
+  percent). The complete deterministic geometry census was `K=64`: 44/959
+  invalid (4.5881 percent), `K=48`: 20/959 invalid (2.0855 percent), and
+  `K=32`: 9/959 invalid (0.9385 percent). Production and debug geometry agreed.
+- The project owner approved resolving that contradictory two-stage contract
+  by selecting the largest `K` in `[64, 48, 32]` that jointly satisfies at
+  least 95 percent overall/per-class coverage in `expert_train`,
+  `expert_calibration`, and `biased_val`, and at most 1 percent overall
+  `biased_val` invalidity. The 1-percent condition is not per class. The joint
+  gate now runs in preflight before training and is reasserted downstream as
+  defense in depth. The current locked inputs therefore select `K=32`.
+- This scientific-contract amendment is AnchorCal `0.6.0` with resolved config
+  schema `anchorcal-config-v4`. The job-70471/70472 campaign artifacts are
+  historical failed-run evidence, not reusable `0.6.0` inputs; production must
+  start from a fresh output root and frozen campaign manifest.
+- The completed `0.6.0` amendment passed **207 AnchorCal tests** and all **81
+  retained SETV tests** (**288 total**), including strict geometry
+  recomputation and saved-validity-vector tamper regressions. Python
+  compilation, every AnchorCal shell/Slurm syntax check, and
+  `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 
@@ -150,6 +175,8 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   and padding; position-free background sets; 64/48/32 no-replacement budget;
   persisted eight-view evaluation bank; exact optimizer/scheduler; fixed epoch
   30; scalar calibration; restart state; final checkpoint and full manifests.
+  The original coverage-only budget-selection behavior is historical and is
+  superseded by the `0.6.0` combined preflight gate recorded above.
 - Review found invalid donor/background examples could otherwise propagate
   NaNs. Geometry/donor pools now require common eligibility and the selected
   fixed token budget; runtime batches fail closed on invalid entries.

@@ -7,8 +7,8 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.5.0` and resolved configuration
-schema `anchorcal-config-v3`; older campaign artifacts are incompatible.
+The corrected campaign requires AnchorCal `0.6.0` and resolved configuration
+schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
 single preflight job is allowed to populate the pinned Hugging Face model
@@ -29,9 +29,9 @@ The first command must print nothing. The launcher freezes that commit, and
 every queued production job checks both the commit and clean-tree status before
 it sources project shell code or imports project Python code.
 
-Create the ignored, machine-local path file. After upgrading from any
-pre-`0.5.0` checkout, refresh it even if it already exists because the exact
-FCV split-manifest root is a newly required input:
+Create the ignored, machine-local path file. If it predates `0.5.0`, refresh it
+even if it already exists because the exact FCV split-manifest root became a
+required input in that release:
 
 ```bash
 cp configs/anchorcal/paths.local.example.yaml \
@@ -152,6 +152,17 @@ the protected audit. Preflight also performs the pretrained-hash, package,
 architecture, and GH200 checks. A failed preflight prevents every downstream
 stage.
 
+Preflight also freezes the background token budget before any branch training.
+It chooses the largest value in `[64, 48, 32]` satisfying both at least 95
+percent overall/per-class eligible-patch coverage in `expert_train`,
+`expert_calibration`, and `biased_val`, and at most 1 percent overall
+`biased_val` invalidity. The latter is not a per-class 1-percent gate. The
+downstream background and anchor stages reassert the overall invalidity limit
+as defense in depth. For the current locked dataset, mask bank, and geometry,
+the expected result is `K=32`: 9 of 959 `biased_val` examples are invalid.
+Another value indicates changed input or geometry provenance and must be
+investigated before continuing.
+
 Preflight also enforces the campaign's storage contract in
 `preflight/storage_budget.json` using schema
 `anchorcal-storage-preflight-v1`. The hard budget is 40 GiB, the launch guard
@@ -268,6 +279,7 @@ preflight/mask_visual_audit/contact_sheet_*.png
 preflight/preflight_artifacts.sha256
 preflight/preprocessing_manifest.json
 preflight/storage_budget.json
+preflight/geometry/background_token_budget.json
 splits/manifest.json
 analysis_only/splits/manifest.json
 analysis_only/masks/waterbirds100_oracle_val_mask_audit.json
@@ -297,6 +309,12 @@ a scheduler-integrity bundle; all downstream wrappers verify that bundle before
 running. That bundle may bind the protected mask-audit bytes, but it is not
 parsed by selector code. The selector-safe `preflight/report.json` contains no
 protected mask-audit path or hash.
+
+Inspect `preflight/geometry/background_token_budget.json` after preflight. It
+must record the complete 64/48/32 coverage and invalidity table, the combined
+gate decision, and `token_budget: 32` for the current locked inputs. If no
+candidate satisfies both gates, preflight fails before debug or production
+training; do not bypass that failure or requeue a downstream job.
 
 The AnchorCal decision receipt exists before candidates are released. In the
 final job, selector-only aggregation writes and hashes the candidate-selection

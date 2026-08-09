@@ -13,7 +13,11 @@ import numpy as np
 import pandas as pd
 
 from .audits import require_branch_above_chance
-from .background import load_view_bank
+from .background import (
+    load_token_budget_manifest,
+    load_view_bank,
+    require_background_validity,
+)
 from .calibration import calibration_diagnostics, fit_temperature
 from .datasets import (
     BranchTrainingDataset,
@@ -539,11 +543,13 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     source = create_pretrained_vit(_load_pretrained_path(output))
     token_budget = None
+    token_payload: dict[str, Any] | None = None
     if branch == "background":
-        with (geometry_artifact_root(config) / "background_token_budget.json").open(
-            "r", encoding="utf-8"
-        ) as handle:
-            token_budget = int(json.load(handle)["token_budget"])
+        token_payload = load_token_budget_manifest(
+            geometry_artifact_root(config) / "background_token_budget.json",
+            config,
+        )
+        token_budget = int(token_payload["token_budget"])
         model = BackgroundBranch(source, token_budget=token_budget)
     else:
         model = ForegroundBranch(
@@ -698,6 +704,38 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
     )
     biased = _attach_calibrated_outputs(biased, temperature.temperature)
     valid = biased["valid"]
+    background_validity_gate = (
+        require_background_validity(
+            valid,
+            maximum_invalid_fraction=float(
+                config["branches"][
+                    "background_max_biased_val_invalid_fraction"
+                ]
+            ),
+        )
+        if branch == "background"
+        else None
+    )
+    if branch == "background":
+        if token_payload is None or background_validity_gate is None:
+            raise AssertionError("background token-budget state was not initialized")
+        expected_invalidity = token_payload["selected_biased_val_invalidity"]
+        if (
+            int(background_validity_gate["invalid_count"])
+            != int(expected_invalidity["count"])
+            or int(background_validity_gate["total"])
+            != int(expected_invalidity["total"])
+            or not np.isclose(
+                float(background_validity_gate["invalid_fraction"]),
+                float(expected_invalidity["fraction"]),
+                rtol=0.0,
+                atol=1.0e-15,
+            )
+        ):
+            raise AuditFailure(
+                "background biased_val validity does not match the frozen "
+                "preflight token-budget decision"
+            )
     correct = biased["logits"][valid].argmax(axis=1) == biased["labels"][valid]
     competence_interval = require_branch_above_chance(
         correct,
@@ -741,6 +779,7 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
             },
         },
         "invalid_biased_val_fraction": float((~valid).mean()),
+        "background_validity_gate": background_validity_gate,
         "resolved_config_sha256": config["resolved_config_sha256"],
         "preflight_report": str(preflight.resolve()),
         "preflight_report_sha256": sha256_file(preflight),
@@ -790,7 +829,5 @@ def train_branch(config: dict[str, Any], branch: str) -> dict[str, Any]:
             "job-receipt stderr_log" if os.environ.get("ANCHORCAL_JOB_RECEIPT") else "process stderr"
         ),
     }
-    if branch == "background" and manifest["invalid_biased_val_fraction"] > 0.01:
-        raise AuditFailure("more than 1% of biased_val is invalid for background branch")
     atomic_write_json(branch_root / "manifest.json", manifest)
     return manifest

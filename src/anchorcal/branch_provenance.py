@@ -7,6 +7,9 @@ import math
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from .background import load_token_budget_manifest
 from .errors import PreflightError
 from .io import sha256_file
 from .paths import geometry_artifact_root
@@ -47,6 +50,100 @@ def _require_file_record(
         raise PreflightError(f"{description} artifact failed provenance verification")
 
 
+def _valid_background_gate(
+    manifest: dict[str, Any],
+    config: dict[str, Any],
+    token_payload: dict[str, Any],
+    biased_path: Path,
+) -> bool:
+    gate = manifest.get("background_validity_gate")
+    if not isinstance(gate, dict):
+        return False
+    invalid_count_value = gate.get("invalid_count")
+    total_value = gate.get("total")
+    invalid_fraction_value = gate.get("invalid_fraction")
+    maximum_value = gate.get("maximum_invalid_fraction")
+    recorded_fraction_value = manifest.get("invalid_biased_val_fraction")
+    if (
+        not isinstance(invalid_count_value, int)
+        or isinstance(invalid_count_value, bool)
+        or not isinstance(total_value, int)
+        or isinstance(total_value, bool)
+        or not isinstance(invalid_fraction_value, (int, float))
+        or isinstance(invalid_fraction_value, bool)
+        or not isinstance(maximum_value, (int, float))
+        or isinstance(maximum_value, bool)
+        or not isinstance(recorded_fraction_value, (int, float))
+        or isinstance(recorded_fraction_value, bool)
+    ):
+        return False
+    invalid_count = invalid_count_value
+    total = total_value
+    invalid_fraction = float(invalid_fraction_value)
+    maximum = float(maximum_value)
+    recorded_fraction = float(recorded_fraction_value)
+    try:
+        with np.load(biased_path, allow_pickle=False) as outputs:
+            valid = outputs["valid"]
+    except (OSError, KeyError, ValueError):
+        return False
+    if valid.dtype != np.bool_ or valid.ndim != 1 or valid.size <= 0:
+        return False
+    output_invalid_count = int(np.sum(~valid))
+    output_total = int(valid.size)
+    selected_invalidity = token_payload.get(
+        "selected_biased_val_invalidity"
+    )
+    if not isinstance(selected_invalidity, dict):
+        return False
+    selected_count = int(selected_invalidity["count"])
+    selected_total = int(selected_invalidity["total"])
+    selected_fraction = float(selected_invalidity["fraction"])
+    configured_maximum = float(
+        config["branches"]["background_max_biased_val_invalid_fraction"]
+    )
+    return bool(
+        set(gate)
+        == {
+            "schema_version",
+            "status",
+            "invalid_count",
+            "total",
+            "invalid_fraction",
+            "maximum_invalid_fraction",
+            "scope",
+        }
+        and gate.get("schema_version")
+        == "anchorcal-background-validity-gate-v1"
+        and gate.get("status") == "passed"
+        and gate.get("scope") == "overall_biased_val"
+        and total > 0
+        and 0 <= invalid_count <= total
+        and invalid_count == output_invalid_count == selected_count
+        and total == output_total == selected_total
+        and math.isclose(
+            invalid_fraction,
+            selected_fraction,
+            rel_tol=0.0,
+            abs_tol=1.0e-15,
+        )
+        and math.isclose(
+            invalid_fraction,
+            invalid_count / total,
+            rel_tol=0.0,
+            abs_tol=1.0e-15,
+        )
+        and math.isclose(
+            recorded_fraction,
+            invalid_fraction,
+            rel_tol=0.0,
+            abs_tol=1.0e-15,
+        )
+        and maximum == configured_maximum
+        and invalid_fraction <= configured_maximum
+    )
+
+
 def verify_branch_artifacts(
     config: dict[str, Any], branch: str
 ) -> dict[str, Any]:
@@ -72,10 +169,11 @@ def verify_branch_artifacts(
     optimizer_groups_path = root / "optimizer_groups.json"
 
     expected_token_budget: int | None = None
+    token_payload: dict[str, Any] | None = None
     if branch == "background":
-        token_payload = _load_json(
+        token_payload = load_token_budget_manifest(
             geometry_artifact_root(config) / "background_token_budget.json",
-            "background token-budget manifest",
+            config,
         )
         expected_token_budget = int(token_payload["token_budget"])
     expected_mode = (
@@ -111,6 +209,10 @@ def verify_branch_artifacts(
         != sha256_file(preprocessing_path)
         or manifest.get("preprocessing_manifest_sha256")
         != preflight.get("preprocessing", {}).get("manifest_sha256")
+        or (
+            branch == "foreground"
+            and manifest.get("background_validity_gate") is not None
+        )
     ):
         raise PreflightError(f"{branch} branch manifest provenance mismatch")
     if (
@@ -127,6 +229,16 @@ def verify_branch_artifacts(
         outputs.get("expert_calibration"), calibration_path, f"{branch} calibration"
     )
     _require_file_record(outputs.get("biased_val"), biased_path, f"{branch} biased-val")
+    if branch == "background" and (
+        token_payload is None
+        or not _valid_background_gate(
+            manifest,
+            config,
+            token_payload,
+            biased_path,
+        )
+    ):
+        raise PreflightError("background branch validity provenance mismatch")
     training_artifacts = manifest.get("training_artifacts", {})
     _require_file_record(
         training_artifacts.get("history"), history_path, f"{branch} training history"

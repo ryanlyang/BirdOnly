@@ -24,7 +24,7 @@ from .audits import (
     require_random_token_collapse,
     stratified_bootstrap_interval,
 )
-from .background import load_view_bank
+from .background import load_token_budget_manifest, load_view_bank
 from .branch_provenance import verify_branch_artifacts
 from .competence import (
     cap_anchor_subset,
@@ -74,10 +74,12 @@ def _load_branch_models(config: dict[str, Any], device):
     namespace = "debug/branches" if config["runtime"]["debug"] else "branches"
     with (output / "preflight" / "pretrained_manifest.json").open("r", encoding="utf-8") as handle:
         weights = json.load(handle)["weights_path"]
-    with (geometry_artifact_root(config) / "background_token_budget.json").open(
-        "r", encoding="utf-8"
-    ) as handle:
-        token_budget = int(json.load(handle)["token_budget"])
+    token_budget = int(
+        load_token_budget_manifest(
+            geometry_artifact_root(config) / "background_token_budget.json",
+            config,
+        )["token_budget"]
+    )
     foreground = ForegroundBranch(
         create_pretrained_vit(weights),
         position_mode=config["branches"]["foreground_position_mode"],

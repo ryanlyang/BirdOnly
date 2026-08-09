@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -28,15 +29,18 @@ from anchorcal.anchor_pipeline import (  # noqa: E402
 from anchorcal.background import (  # noqa: E402
     build_view_arrays,
     invalid_background_records,
+    require_background_validity,
     sample_background_indices,
     select_token_budget,
+    token_budget_manifest,
+    validate_token_budget_manifest,
 )
 from anchorcal.calibration import average_view_logits, fit_temperature  # noqa: E402
 from anchorcal.competence import (  # noqa: E402
     cap_anchor_subset,
     construct_competence_intersection,
 )
-from anchorcal.errors import AuditFailure  # noqa: E402
+from anchorcal.errors import AuditFailure, PreflightError  # noqa: E402
 from anchorcal.metrics import (  # noqa: E402
     classification_metrics,
     class_balanced_mean,
@@ -44,7 +48,7 @@ from anchorcal.metrics import (  # noqa: E402
     per_example_cross_entropy,
 )
 from anchorcal.seeds import stable_seed  # noqa: E402
-from anchorcal.io import hash_object  # noqa: E402
+from anchorcal.io import hash_object, read_yaml  # noqa: E402
 from anchorcal.vlm_masks import (  # noqa: E402
     VlmMaskBank,
     decode_vlm_mask,
@@ -88,6 +92,146 @@ class BackgroundBudgetAndViewTests(unittest.TestCase):
         }
         with self.assertRaises(AuditFailure):
             select_token_budget(split_counts, split_labels)
+
+    def test_combined_gate_rejects_48_and_selects_32(self) -> None:
+        labels = np.repeat([0, 1], 100)
+        counts = {
+            name: np.full(200, 70, dtype=np.int64)
+            for name in ("expert_train", "expert_calibration", "biased_val")
+        }
+        # K=64 fails class-0 coverage. K=48 has 98% overall biased-val
+        # validity and passes every 95% coverage gate, but violates the
+        # separate 1% invalidity cap. K=32 is fully valid.
+        counts["biased_val"][0:6] = 55
+        counts["biased_val"][100:104] = 40
+        split_labels = {name: labels.copy() for name in counts}
+
+        decision = select_token_budget(counts, split_labels)
+
+        self.assertEqual(decision.token_budget, 32)
+        self.assertEqual(
+            decision.biased_val_invalidity["48"],
+            {"count": 4, "total": 200, "fraction": 0.02},
+        )
+        self.assertEqual(
+            decision.biased_val_invalidity["32"],
+            {"count": 0, "total": 200, "fraction": 0.0},
+        )
+        self.assertEqual(
+            decision.candidate_passes,
+            {"64": False, "48": False, "32": True},
+        )
+
+    def test_one_percent_boundary_and_biased_val_scope_are_exact(self) -> None:
+        labels = np.repeat([0, 1], 100)
+        boundary_counts = {
+            name: np.full(200, 40, dtype=np.int64)
+            for name in ("expert_train", "expert_calibration", "biased_val")
+        }
+        boundary_counts["biased_val"][:2] = 31
+        split_labels = {name: labels.copy() for name in boundary_counts}
+        boundary = select_token_budget(
+            boundary_counts,
+            split_labels,
+            candidates=(32,),
+        )
+        self.assertEqual(boundary.token_budget, 32)
+        self.assertEqual(
+            boundary.biased_val_invalidity["32"]["fraction"], 0.01
+        )
+
+        scope_counts = {
+            name: np.full(200, 70, dtype=np.int64)
+            for name in ("expert_train", "expert_calibration", "biased_val")
+        }
+        scope_counts["expert_train"][:4] = 40
+        scope_counts["expert_train"][100:104] = 40
+        scope_counts["expert_calibration"][:4] = 40
+        scope_counts["expert_calibration"][100:104] = 40
+        scoped = select_token_budget(
+            scope_counts,
+            {name: labels.copy() for name in scope_counts},
+            candidates=(48,),
+        )
+        self.assertEqual(scoped.token_budget, 48)
+        self.assertEqual(scoped.coverage["48"]["expert_train.class_0"], 0.96)
+        self.assertEqual(scoped.biased_val_invalidity["48"]["fraction"], 0.0)
+
+    def test_combined_gate_aborts_when_coverage_passes_but_invalidity_fails(
+        self,
+    ) -> None:
+        labels = np.repeat([0, 1], 100)
+        counts = {
+            name: np.full(200, 40, dtype=np.int64)
+            for name in ("expert_train", "expert_calibration", "biased_val")
+        }
+        counts["biased_val"][:4] = 31
+        with self.assertRaisesRegex(AuditFailure, "at most 1% biased_val"):
+            select_token_budget(
+                counts,
+                {name: labels.copy() for name in counts},
+                candidates=(32,),
+            )
+
+    def test_runtime_validity_backstop_uses_the_same_inclusive_boundary(self) -> None:
+        passing = np.ones(100, dtype=bool)
+        passing[0] = False
+        payload = require_background_validity(
+            passing,
+            maximum_invalid_fraction=0.01,
+        )
+        self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["invalid_count"], 1)
+
+        failing = passing.copy()
+        failing[1] = False
+        with self.assertRaisesRegex(AuditFailure, "2/100=0.02000000"):
+            require_background_validity(
+                failing,
+                maximum_invalid_fraction=0.01,
+            )
+
+    def test_token_budget_manifest_binds_both_gates_and_largest_valid_k(self) -> None:
+        counts, labels = self._coverage_inputs()
+        decision = select_token_budget(counts, labels)
+        config = read_yaml(ROOT / "configs" / "anchorcal" / "pilot.yaml")
+        manifest = token_budget_manifest(decision, config)
+
+        self.assertEqual(validate_token_budget_manifest(manifest, config), 48)
+        self.assertEqual(
+            manifest["selected_biased_val_invalidity"],
+            {"count": 0, "total": 40, "fraction": 0.0},
+        )
+        tampered = {**manifest, "token_budget": 32}
+        with self.assertRaisesRegex(PreflightError, "largest valid K"):
+            validate_token_budget_manifest(tampered, config)
+
+        for field, mutate in (
+            (
+                "token_budget_type",
+                lambda value: value.update(token_budget=48.0),
+            ),
+            (
+                "candidate_type",
+                lambda value: value["candidates"].__setitem__(0, 64.0),
+            ),
+            (
+                "pass_type",
+                lambda value: value["candidate_passes"].update({"64": 0}),
+            ),
+        ):
+            with self.subTest(field=field):
+                malformed = json.loads(json.dumps(manifest))
+                mutate(malformed)
+                with self.assertRaises(PreflightError):
+                    validate_token_budget_manifest(malformed, config)
+
+    def test_budget_rejects_noninteger_or_nondescending_candidates(self) -> None:
+        counts, labels = self._coverage_inputs()
+        for candidates in ((32, 64, 48), (64.5, 48, 32), (True,)):
+            with self.subTest(candidates=candidates):
+                with self.assertRaises(ValueError):
+                    select_token_budget(counts, labels, candidates=candidates)
 
     def test_sampling_is_deterministic_and_never_uses_replacement(self) -> None:
         eligible = np.arange(100, dtype=np.int64)

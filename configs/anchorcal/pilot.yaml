@@ -1,4 +1,4 @@
-schema_version: anchorcal-config-v3
+schema_version: anchorcal-config-v4
 
 data:
   release: waterbird_1.0_forest2water2
@@ -99,6 +99,7 @@ branches:
   foreground_fill_rgb: [0, 255, 0]
   background_token_budget_candidates: [64, 48, 32]
   background_min_coverage: 0.95
+  background_max_biased_val_invalid_fraction: 0.01
   background_eval_views: 8
   no_background_sampling_replacement: true
 

@@ -13,6 +13,7 @@ from .background import (
     invalid_background_records,
     persist_view_bank,
     select_token_budget,
+    token_budget_manifest,
 )
 from .data import image_path
 from .errors import AuditFailure
@@ -123,13 +124,11 @@ def prepare_geometry_artifacts(
         {name: table["y"].to_numpy() for name, table in tables.items()},
         candidates=tuple(config["branches"]["background_token_budget_candidates"]),
         minimum_coverage=float(config["branches"]["background_min_coverage"]),
+        maximum_biased_val_invalid_fraction=float(
+            config["branches"]["background_max_biased_val_invalid_fraction"]
+        ),
     )
-    token_manifest = {
-        "token_budget": decision.token_budget,
-        "coverage": decision.coverage,
-        "selection_inputs": ["expert_train", "expert_calibration", "biased_val"],
-        "selection_rule": "largest_64_48_32_meeting_95pct_overall_and_per_class",
-    }
+    token_manifest = token_budget_manifest(decision, config)
     atomic_write_json(artifact_root / "background_token_budget.json", token_manifest)
     eval_backgrounds = dict(backgrounds["expert_calibration"])
     eval_backgrounds.update(backgrounds["biased_val"])
@@ -152,6 +151,31 @@ def prepare_geometry_artifacts(
         mask_dilation_hash=hash_object({"implementation": "euclidean_disk", "radius": 8}),
         purpose="background_branch_eval",
     )
+    expected_eval_invalid = sorted(
+        img_id
+        for split in ("expert_calibration", "biased_val")
+        for img_id, eligible in backgrounds[split].items()
+        if len(eligible) < decision.token_budget
+    )
+    selected_invalidity = decision.biased_val_invalidity[
+        str(decision.token_budget)
+    ]
+    biased_invalid_count = int(
+        np.sum(
+            tables["biased_val"]["safe_background_count"].to_numpy(
+                dtype=np.int64
+            )
+            < decision.token_budget
+        )
+    )
+    if (
+        view_manifest["invalid_ids"] != expected_eval_invalid
+        or int(selected_invalidity["count"]) != biased_invalid_count
+        or int(selected_invalidity["total"]) != len(tables["biased_val"])
+    ):
+        raise AuditFailure(
+            "background view bank does not match the frozen token-budget decision"
+        )
     biased_table = tables["biased_val"]
     common_counts = {
         str(label): int(

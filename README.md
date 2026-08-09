@@ -1,8 +1,8 @@
 # AnchorCal Waterbirds100 pilot
 
 The active research implementation is the independent `anchorcal` package.
-The corrected Waterbirds100 contract is AnchorCal version `0.5.0` with resolved
-configuration schema `anchorcal-config-v3`.
+The corrected Waterbirds100 contract is AnchorCal version `0.6.0` with resolved
+configuration schema `anchorcal-config-v4`.
 It builds controlled foreground-reliance anchors, uses them to select one of
 four practical validation criteria, and evaluates that frozen choice on a
 six-run ordinary ViT candidate grid. The binding documents are
@@ -35,6 +35,12 @@ omit per-example metadata indices and context/group fields; protected
 oracle/test records use
 `analysis_only/splits/` schema `anchorcal-analysis-only-splits-v1`. Then use
 `scripts/anchorcal/submit_campaign.sh` from a clean committed TIGRIS checkout.
+For the position-free background branch, preflight chooses the largest value
+in `[64, 48, 32]` that jointly retains at least 95 percent overall and
+per-class coverage in every required split and leaves at most 1 percent of
+`biased_val` invalid overall. The current locked Waterbirds100 bank selects
+`K=32` (9 of 959 invalid). This gate runs before training and is reasserted
+downstream; patches are never duplicated to meet the budget.
 Preflight fail-closes on the hash-bound storage contract (40 GiB hard budget,
 35 GiB launch guard, 16 GiB minimum free space, and 6 GiB concurrent-growth
 allowance) before any production training is released.

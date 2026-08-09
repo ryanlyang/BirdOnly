@@ -22,7 +22,10 @@ Most of the reviewer recommendations are accepted. The main clarifications or ov
 1. Source masks are the locked Waterbirds-100 VLM `prediction_cmap` PNGs and
    use strict categorical VOC decoding with foreground class ID 1.
 2. Empty stochastic foreground crops use a bounded rejection sampler and a logged deterministic fallback. Excessive fallbacks abort the run.
-3. The background branch does **not** sample with replacement in the primary design. The token budget falls back from 64 to 48 or 32 under a prespecified coverage rule.
+3. The background branch does **not** sample with replacement in the primary
+   design. Preflight chooses the largest token budget among 64, 48, and 32 that
+   jointly passes the prespecified 95-percent overall/per-class coverage gates
+   and the at-most-1-percent overall `biased_val` invalidity gate.
 4. The foreground and background branches freeze at fixed epoch 30. The calibration split is not used for branch checkpoint selection.
 5. Saliency uses only fully foreground patches and fully safe background patches.
 6. The blur baseline uses mask-normalized background-only convolution so bird color cannot bleed into the blurred background.
@@ -60,8 +63,8 @@ Configuration Snapshot; and the mask entries under Remaining
 Environment-Specific Preflight Items. Non-conflicting requirements remain
 binding.
 
-This incompatible correction is versioned as AnchorCal package `0.5.0`,
-resolved configuration schema `anchorcal-config-v3`, VLM-mask manifest schema
+This incompatible correction is versioned as AnchorCal package `0.6.0`,
+resolved configuration schema `anchorcal-config-v4`, VLM-mask manifest schema
 `anchorcal-vlm-mask-manifest-v3`, and split manifest schema
 `anchorcal-splits-v4`. Older schema artifacts cannot satisfy this campaign.
 
@@ -797,18 +800,26 @@ Choose the largest token budget satisfying all of:
 
 - at least 95 percent of examples in each relevant split have at least K eligible pure-background patches;
 - every class retains at least 95 percent coverage;
+- no more than 1 percent of `biased_val` overall is invalid because it has
+  fewer than K eligible pure-background patches.
+
+The final condition is an overall `biased_val` gate, not an additional
+per-class 1-percent requirement.
 
 Examples with fewer than the chosen K patches are marked invalid for the background branch. Do not duplicate patches.
 
-Freeze the selected K before branch training and store it in the manifest.
+Freeze the selected K before branch training and store the complete candidate
+coverage, invalidity, pass/fail, and selection records in the manifest. If no
+candidate passes all three conditions, preflight aborts before branch training.
 
 The competence intersection is not part of pre-training K selection because it
 does not exist until both branches have been trained. After training once with
-the frozen coverage-selected K, apply the 50-valid-examples-per-class
+the frozen preflight-selected K, apply the 50-valid-examples-per-class
 intersection requirement as a hard post-training gate. Do not lower K and
 retrain in response to a failed intersection.
 
-If K=32 still fails coverage, abort and redesign the background branch.
+If K=32 still fails either coverage requirement or the overall `biased_val`
+invalidity limit, abort and redesign the background branch.
 
 ---
 
@@ -836,6 +847,11 @@ the competence intersection falls below 50 valid examples per class
 ```
 
 No blank background representation is allowed.
+
+The overall `biased_val` invalidity condition is part of token-budget selection
+during preflight and is reasserted by downstream branch and anchor consumers as
+defense in depth. Exactly 1 percent is allowed; a fraction greater than 1
+percent fails.
 
 ---
 
@@ -2931,9 +2947,11 @@ in resume checkpoints.
 
 **Decision**
 
-Preflight selects the largest value in `{64, 48, 32}` satisfying only the
+Preflight selects the largest value in `{64, 48, 32}` satisfying both the
 prespecified overall and per-class 95-percent coverage gates on
-`expert_train`, `expert_calibration`, and `biased_val`.
+`expert_train`, `expert_calibration`, and `biased_val`, and the requirement
+that no more than 1 percent of `biased_val` overall is invalid. This second
+condition is not a per-class 1-percent gate.
 
 Freeze that K, train each production branch once, and then evaluate the
 50-valid-examples-per-class competence-intersection gate. A failed intersection
@@ -3221,7 +3239,7 @@ the practical selection receipt is frozen.
 # Final Resolved Configuration Snapshot
 
 ```yaml
-schema_version: anchorcal-config-v3
+schema_version: anchorcal-config-v4
 
 data:
   release: waterbird_1.0_forest2water2
@@ -3299,6 +3317,8 @@ branches:
   fine_tune_all: true
   foreground_position_encoder: [2, 128, 384]
   background_token_budget_candidates: [64, 48, 32]
+  background_min_coverage: 0.95
+  background_max_biased_val_invalid_fraction: 0.01
   background_eval_views: 8
   no_background_sampling_replacement: true
 

@@ -857,10 +857,19 @@ Preflight considers token budgets in this fixed order:
 K_background_tokens in [64, 48, 32]
 ```
 
-It selects the largest `K` for which at least 95 percent of examples overall
-and within each class have at least `K` eligible pure-background patches in
-`expert_train`, `expert_calibration`, and `biased_val`. Freeze that one value
-before branch training.
+It selects the largest `K` satisfying both of these preflight gates:
+
+- at least 95 percent of examples overall and within each class have at least
+  `K` eligible pure-background patches in `expert_train`,
+  `expert_calibration`, and `biased_val`;
+- no more than 1 percent of `biased_val` overall is invalid because it has
+  fewer than `K` eligible pure-background patches.
+
+The 1-percent condition is overall on `biased_val`; it is not an additional
+per-class 1-percent condition. Freeze the jointly valid value before branch
+training. Enforce both gates during preflight so an infeasible token budget
+fails before any branch training, and reassert the `biased_val` invalidity gate
+downstream as defense in depth.
 
 Rules:
 
@@ -868,8 +877,8 @@ Rules:
 - if \(|\mathcal B(x)|<K\), mark the example invalid for the background branch
   and log its ID and reason;
 - never duplicate a patch to fill the budget;
-- if `K=32` fails either 95-percent coverage requirement, abort and redesign
-  the branch.
+- if `K=32` fails either 95-percent coverage requirement or the overall
+  `biased_val` invalidity limit, abort and redesign the branch.
 
 Randomize token order.
 
@@ -2790,11 +2799,11 @@ The core pilot is not supported if:
 
 # 28. Locked Default Configuration
 
-The corrected implementation package is version `0.5.0`, and this configuration
-uses schema `anchorcal-config-v3`.
+The corrected implementation package is version `0.6.0`, and this configuration
+uses schema `anchorcal-config-v4`.
 
 ```yaml
-schema_version: anchorcal-config-v3
+schema_version: anchorcal-config-v4
 
 data:
   release: waterbird_1.0_forest2water2
@@ -2856,7 +2865,9 @@ background_branch:
   heads: 6
   mask_dilation_pixels: 8
   token_budget_candidates: [64, 48, 32]
-  token_budget_selection: largest_meeting_95_percent_overall_and_per_class
+  minimum_coverage: 0.95
+  maximum_biased_val_invalid_fraction: 0.01
+  token_budget_selection: largest_meeting_95_percent_overall_and_per_class_and_at_most_1_percent_overall_biased_val_invalidity
   sample_with_replacement: false
   eval_views: 8
   epochs: 30

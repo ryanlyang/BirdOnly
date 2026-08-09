@@ -22,6 +22,11 @@ from anchorcal.splits import (  # noqa: E402
     VISIBLE_SPLIT_COLUMNS,
 )
 from anchorcal.anchor_artifacts import verify_anchor_artifacts  # noqa: E402
+from anchorcal.background import (  # noqa: E402
+    require_background_validity,
+    select_token_budget,
+    token_budget_manifest,
+)
 from anchorcal.branch_provenance import verify_branch_artifacts  # noqa: E402
 from anchorcal.candidate_schema import (  # noqa: E402
     CANDIDATE_SCALAR_METRICS,
@@ -201,6 +206,9 @@ class AnalysisIntegrationTests(unittest.TestCase):
             "branches": {
                 "frozen_epoch": 30,
                 "foreground_position_mode": "object_relative",
+                "background_token_budget_candidates": [64, 48, 32],
+                "background_min_coverage": 0.95,
+                "background_max_biased_val_invalid_fraction": 0.01,
             },
             "seeds": {"final_metric_bootstrap": 7003},
         }
@@ -492,7 +500,53 @@ class AnalysisIntegrationTests(unittest.TestCase):
         geometry = self.output / "debug" / "preflight" / "geometry"
         geometry.mkdir(parents=True)
         biased.to_csv(geometry / "selector_eval_subset.csv", index=False)
-        atomic_write_json(geometry / "background_token_budget.json", {"token_budget": 64})
+        labels = np.asarray([0, 0, 1, 1], dtype=np.int64)
+        safe_background_counts = np.full(4, 64, dtype=np.int64)
+        geometry_frame = pd.DataFrame(
+            {
+                "img_id": biased["img_id"].to_numpy(dtype=np.int64),
+                "y": labels,
+                "safe_background_count": safe_background_counts,
+            }
+        )
+        for name in ("expert_train", "expert_calibration", "biased_val"):
+            geometry_frame.to_csv(
+                geometry / f"{name}_geometry.csv",
+                index=False,
+            )
+        decision = select_token_budget(
+            {
+                name: safe_background_counts.copy()
+                for name in (
+                    "expert_train",
+                    "expert_calibration",
+                    "biased_val",
+                )
+            },
+            {
+                name: labels.copy()
+                for name in (
+                    "expert_train",
+                    "expert_calibration",
+                    "biased_val",
+                )
+            },
+            candidates=tuple(
+                self.config["branches"]["background_token_budget_candidates"]
+            ),
+            minimum_coverage=float(
+                self.config["branches"]["background_min_coverage"]
+            ),
+            maximum_biased_val_invalid_fraction=float(
+                self.config["branches"][
+                    "background_max_biased_val_invalid_fraction"
+                ]
+            ),
+        )
+        atomic_write_json(
+            geometry / "background_token_budget.json",
+            token_budget_manifest(decision, self.config),
+        )
         source_metadata_sha256 = sha256_file(self.metadata_path)
         hidden = pd.DataFrame(
             {
@@ -646,7 +700,11 @@ class AnalysisIntegrationTests(unittest.TestCase):
             calibration = branch_root / "expert_calibration_outputs.npz"
             biased_output = branch_root / "biased_val_outputs.npz"
             np.savez_compressed(calibration, logits=np.zeros((2, 2)))
-            np.savez_compressed(biased_output, logits=np.zeros((4, 2)))
+            np.savez_compressed(
+                biased_output,
+                logits=np.zeros((4, 2)),
+                valid=np.ones(4, dtype=bool),
+            )
             fallback = branch_root / "crop_fallback_events.json"
             atomic_write_json(
                 fallback,
@@ -693,6 +751,18 @@ class AnalysisIntegrationTests(unittest.TestCase):
             preflight = self.output / "preflight" / "report.json"
             preflight_payload = json.loads(preflight.read_text(encoding="utf-8"))
             preprocessing = self.output / "preflight" / "preprocessing_manifest.json"
+            background_validity_gate = (
+                require_background_validity(
+                    np.ones(4, dtype=bool),
+                    maximum_invalid_fraction=float(
+                        self.config["branches"][
+                            "background_max_biased_val_invalid_fraction"
+                        ]
+                    ),
+                )
+                if branch == "background"
+                else None
+            )
             atomic_write_json(
                 branch_root / "manifest.json",
                 {
@@ -768,6 +838,7 @@ class AnalysisIntegrationTests(unittest.TestCase):
                         "temperature": 1.2,
                     },
                     "invalid_biased_val_fraction": 0.0,
+                    "background_validity_gate": background_validity_gate,
                 },
             )
         audits = self.output / "debug" / "audits"
@@ -1227,6 +1298,47 @@ class AnalysisIntegrationTests(unittest.TestCase):
         atomic_write_json(path, payload)
         with self.assertRaisesRegex(PreflightError, "provenance mismatch"):
             verify_branch_artifacts(self.config, "foreground")
+
+    def test_background_budget_is_recomputed_from_frozen_geometry(self) -> None:
+        path = (
+            self.output
+            / "debug"
+            / "preflight"
+            / "geometry"
+            / "biased_val_geometry.csv"
+        )
+        frame = pd.read_csv(path)
+        frame.loc[0, "safe_background_count"] = 31
+        frame.to_csv(path, index=False)
+        with self.assertRaisesRegex(
+            PreflightError,
+            "geometry cannot reproduce a valid decision",
+        ):
+            verify_branch_artifacts(self.config, "background")
+
+    def test_background_validity_receipt_must_match_saved_outputs(self) -> None:
+        root = self.output / "debug" / "branches" / "background"
+        outputs_path = root / "biased_val_outputs.npz"
+        with np.load(outputs_path, allow_pickle=False) as stored:
+            arrays = {name: stored[name] for name in stored.files}
+        arrays["valid"] = arrays["valid"].copy()
+        arrays["valid"][0] = False
+        np.savez_compressed(outputs_path, **arrays)
+
+        manifest_path = root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["outputs"]["biased_val"].update(
+            {
+                "sha256": sha256_file(outputs_path),
+                "size_bytes": outputs_path.stat().st_size,
+            }
+        )
+        atomic_write_json(manifest_path, manifest)
+        with self.assertRaisesRegex(
+            PreflightError,
+            "validity provenance mismatch",
+        ):
+            verify_branch_artifacts(self.config, "background")
 
     def test_branch_history_and_optimizer_group_hashes_are_required(self) -> None:
         branch_root = self.output / "debug" / "branches" / "foreground"

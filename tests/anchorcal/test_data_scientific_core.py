@@ -100,6 +100,20 @@ class SeedAndConfigurationContractTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             validate_locked_config(mutated_replacement)
 
+    def test_config_locks_the_background_biased_val_invalidity_gate(self) -> None:
+        config = read_yaml(ROOT / "configs" / "anchorcal" / "pilot.yaml")
+        self.assertEqual(
+            config["branches"][
+                "background_max_biased_val_invalid_fraction"
+            ],
+            0.01,
+        )
+        config["branches"][
+            "background_max_biased_val_invalid_fraction"
+        ] = 0.02
+        with self.assertRaises(ConfigurationError):
+            validate_locked_config(config)
+
     def test_unmodified_pilot_config_passes_locked_validator(self) -> None:
         original = read_yaml(ROOT / "configs" / "anchorcal" / "pilot.yaml")
         validate_locked_config(original)

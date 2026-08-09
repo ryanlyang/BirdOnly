@@ -21,7 +21,7 @@ REQUIRED_PATH_KEYS = (
 )
 
 LOCKED = {
-    ("schema_version",): "anchorcal-config-v3",
+    ("schema_version",): "anchorcal-config-v4",
     ("data", "release"): "waterbird_1.0_forest2water2",
     (
         "data",
@@ -127,6 +127,7 @@ LOCKED = {
     ("branches", "foreground_position_mode"): "object_relative",
     ("branches", "foreground_fill_rgb"): [0, 255, 0],
     ("branches", "background_min_coverage"): 0.95,
+    ("branches", "background_max_biased_val_invalid_fraction"): 0.01,
     ("branches", "background_eval_views"): 8,
     ("candidate_grid", "epochs"): 40,
     ("candidate_grid", "architecture"): "vit_small_patch16_224",
