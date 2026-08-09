@@ -3,5 +3,6 @@ paths:
   waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
   metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
   vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+  fcv_split_manifest_root: /home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot

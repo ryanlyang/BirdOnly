@@ -237,7 +237,7 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                 (
                     preflight / "mask_manifest.json",
                     {
-                        "schema_version": "anchorcal-vlm-mask-manifest-v2",
+                        "schema_version": "anchorcal-vlm-mask-manifest-v3",
                         "producer": (
                             "waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap"
                         ),
@@ -272,7 +272,8 @@ class BranchAndAnchorBoundaryTests(unittest.TestCase):
                     "allowed_class_ids": [0, 1],
                     "minimum_foreground_fraction": 0.0,
                     "maximum_foreground_fraction": 1.0,
-                    "required_official_splits": [0, 1],
+                    "selector_required_official_splits": [0],
+                    "analysis_only_audit_official_splits": [1],
                     "optional_official_splits": [2],
                     "runtime_resolve_from_manifest_only": True,
                 },

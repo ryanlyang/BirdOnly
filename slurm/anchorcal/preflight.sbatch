@@ -31,7 +31,7 @@ worktree_status=$(git -C "$ANCHORCAL_REPO" status --porcelain --untracked-files=
 
 # The commit/clean-tree guard above intentionally precedes project shell/Python code.
 source "$ANCHORCAL_REPO/slurm/anchorcal/runtime_common.sh"
-anchorcal_prepare_runtime online 1729 preflight gpu
+anchorcal_prepare_runtime online 0 preflight gpu
 
 srun --unbuffered "$ANCHORCAL_PYTHON" -u scripts/anchorcal/preflight.py \
   --config "$ANCHORCAL_CONFIG" \
@@ -42,7 +42,13 @@ srun --unbuffered "$ANCHORCAL_PYTHON" -u scripts/anchorcal/preflight.py \
 preflight_files=(
   preflight/report.json
   preflight/resolved_config.yaml
+  preflight/storage_budget.json
   preflight/mask_manifest.json
+  preflight/selector_mask_receipt.json
+  preflight/mask_visual_audit/manifest.json
+  preflight/mask_visual_audit/contact_sheet_01.png
+  preflight/mask_visual_audit/contact_sheet_02.png
+  preflight/mask_visual_audit/contact_sheet_03.png
   preflight/pretrained_manifest.json
   preflight/preprocessing_manifest.json
   environment/environment.json
@@ -52,8 +58,10 @@ preflight_files=(
   splits/waterbirds100_biased_val.csv
   splits/waterbirds100_expert_train.csv
   splits/waterbirds100_expert_calibration.csv
-  splits/waterbirds100_oracle_val.csv
-  splits/waterbirds100_test.csv
+  analysis_only/splits/manifest.json
+  analysis_only/splits/waterbirds100_oracle_val.csv
+  analysis_only/splits/waterbirds100_test.csv
+  analysis_only/masks/waterbirds100_oracle_val_mask_audit.json
   preflight/geometry/expert_train_geometry.csv
   preflight/geometry/expert_calibration_geometry.csv
   preflight/geometry/biased_val_geometry.csv

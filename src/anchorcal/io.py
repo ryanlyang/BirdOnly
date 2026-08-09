@@ -53,6 +53,28 @@ def _atomic_text(path: Path, text: str) -> None:
         raise
 
 
+def atomic_write_bytes(path: str | Path, payload: bytes) -> None:
+    """Atomically publish exact binary bytes on the destination filesystem."""
+
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def atomic_write_json(path: str | Path, value: Any) -> None:
     _atomic_text(Path(path), json.dumps(value, indent=2, sort_keys=True) + "\n")
 

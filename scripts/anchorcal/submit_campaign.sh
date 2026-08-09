@@ -78,7 +78,7 @@ payload = yaml.safe_load(source.read_text(encoding="utf-8"))
 paths = payload.get("paths", payload) if isinstance(payload, dict) else None
 required = (
     "repo_root", "waterbirds_root", "metadata_path",
-    "vlm_mask_root",
+    "vlm_mask_root", "fcv_split_manifest_root",
     "hf_home", "output_root",
 )
 if not isinstance(paths, dict):
@@ -94,6 +94,7 @@ fixed = {
     "waterbirds_root": "/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2",
     "metadata_path": "/home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv",
     "vlm_mask_root": "/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap",
+    "fcv_split_manifest_root": "/home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests",
     "output_root": "/home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot",
     "hf_home": "/home/ryreu/.cache/huggingface",
 }
@@ -103,12 +104,22 @@ for key, expected in fixed.items():
 expected_metadata = pathlib.Path(paths["waterbirds_root"]).resolve() / "metadata.csv"
 if pathlib.Path(paths["metadata_path"]).resolve() != expected_metadata:
     raise SystemExit("paths.metadata_path must be <waterbirds_root>/metadata.csv")
-for key in ("repo_root", "waterbirds_root", "vlm_mask_root"):
+for key in ("repo_root", "waterbirds_root", "vlm_mask_root", "fcv_split_manifest_root"):
     if not pathlib.Path(paths[key]).is_dir():
         raise SystemExit(f"paths.{key} is not an existing directory: {paths[key]}")
 metadata_value = paths["metadata_path"]
 if not pathlib.Path(metadata_value).is_file():
     raise SystemExit(f"paths.metadata_path is not an existing file: {metadata_value}")
+fcv_root = pathlib.Path(paths["fcv_split_manifest_root"])
+for filename in (
+    "manifest_bundle.json",
+    "split_indices.json",
+    "metadata_train.csv",
+    "metadata_val.csv",
+):
+    candidate = fcv_root / filename
+    if not candidate.is_file():
+        raise SystemExit(f"frozen FCV membership artifact is missing: {candidate}")
 ' "$PATHS_SOURCE"
 
 # Slurm opens stdout/stderr before the job body, so these directories must

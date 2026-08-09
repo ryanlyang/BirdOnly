@@ -18,21 +18,28 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from anchorcal.data import image_path  # noqa: E402
 from anchorcal.errors import PreflightError  # noqa: E402
-from anchorcal.io import atomic_write_json, sha256_file  # noqa: E402
+from anchorcal.io import atomic_write_json, hash_object, sha256_file  # noqa: E402
+from anchorcal.mask_identity import SELECTOR_MASK_RECEIPT_SCHEMA  # noqa: E402
 from anchorcal.paths import discover_candidates  # noqa: E402
 from anchorcal.preflight import (  # noqa: E402
     validate_images_and_masks,
     validate_release,
 )
 from anchorcal.vlm_masks import (  # noqa: E402
+    ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
+    ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
     VLM_DECODER_VERSION,
     VLM_MAPPING_VERSION,
     VLM_MASK_MANIFEST_SCHEMA,
     VLM_PRODUCER,
     decode_vlm_mask,
+    load_analysis_only_mask_audit,
     load_vlm_mask_bank,
     producer_vlm_mask_name,
     teacher_map_candidates,
+)
+from tests.anchorcal.visual_audit_fixture import (  # noqa: E402
+    attach_synthetic_visual_audit,
 )
 
 
@@ -138,7 +145,37 @@ class PreflightPathContractTests(unittest.TestCase):
         preflight = self.output_root / "preflight"
         preflight.mkdir(parents=True, exist_ok=True)
         path = preflight / "mask_manifest.json"
+        manifest = copy.deepcopy(manifest)
+        visual_audit = attach_synthetic_visual_audit(self.output_root, manifest)
+        manifest["visual_audit"] = visual_audit
         atomic_write_json(path, manifest)
+        selector_receipt = {
+            "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+            "status": "passed",
+            "namespace": "selector_visible",
+            "contains_per_row_records": False,
+            "selector_required_official_splits": [0],
+            "resolved_config_sha256": self._config()[
+                "resolved_config_sha256"
+            ],
+            "metadata_sha256": manifest["metadata_sha256"],
+            "git_commit": "deadbeef",
+            "mask_source": VLM_PRODUCER,
+            "mask_contract_sha256": manifest["mask_contract_sha256"],
+            "mask_bank_sha256": manifest["mask_bank_sha256"],
+            "mask_manifest_sha256": sha256_file(path),
+            "foreground_area_summary_sha256": hash_object(
+                manifest["foreground_area_summary"]
+            ),
+            "mask_visual_audit_manifest_sha256": visual_audit[
+                "manifest_sha256"
+            ],
+            "mask_visual_audit_selection_sha256": visual_audit[
+                "selection_sha256"
+            ],
+        }
+        selector_receipt_path = preflight / "selector_mask_receipt.json"
+        atomic_write_json(selector_receipt_path, selector_receipt)
         atomic_write_json(
             preflight / "report.json",
             {
@@ -152,7 +189,13 @@ class PreflightPathContractTests(unittest.TestCase):
                 "mask_source": VLM_PRODUCER,
                 "mask_contract_sha256": manifest["mask_contract_sha256"],
                 "mask_bank_sha256": manifest["mask_bank_sha256"],
+                "foreground_area_summary": manifest["foreground_area_summary"],
+                "mask_visual_audit": visual_audit,
                 "mask_manifest_sha256": sha256_file(path),
+                "selector_mask_receipt": {
+                    "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+                    "sha256": sha256_file(selector_receipt_path),
+                },
             },
         )
         return path
@@ -193,12 +236,14 @@ class PreflightPathContractTests(unittest.TestCase):
         self.assertEqual(manifest["metadata_sha256"], metadata_hash)
         self.assertEqual(manifest["mapping_version"], VLM_MAPPING_VERSION)
         self.assertEqual(manifest["decoder_version"], VLM_DECODER_VERSION)
-        self.assertEqual(manifest["required_count"], 2)
+        self.assertEqual(manifest["selector_required_official_splits"], [0])
+        self.assertEqual(manifest["analysis_only_audit_official_splits"], [1])
+        self.assertEqual(manifest["required_count"], 1)
         self.assertEqual(
             manifest["required_mapping_audit"],
             {
-                "expected": 2,
-                "resolved_unique": 2,
+                "expected": 1,
+                "resolved_unique": 1,
                 "missing": 0,
                 "ambiguous": 0,
                 "reused": 0,
@@ -206,15 +251,16 @@ class PreflightPathContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(manifest["coverage"]["0"], {"expected": 1, "present": 1})
-        self.assertEqual(manifest["coverage"]["1"], {"expected": 1, "present": 1})
+        self.assertNotIn("1", manifest["coverage"])
         self.assertEqual(
             manifest["optional_split_inventory"],
             {"expected": 1, "missing": 1, "unique": 0, "ambiguous": 0},
         )
-        self.assertEqual([entry["img_id"] for entry in manifest["entries"]], [17, 18])
+        self.assertEqual([entry["img_id"] for entry in manifest["entries"]], [17])
+        self.assertNotIn("metadata_index", manifest["entries"][0])
         self.assertEqual(
             manifest["mapping_rule_counts"],
-            {"weclip_producer_flattened_relative_stem": 2},
+            {"weclip_producer_flattened_relative_stem": 1},
         )
         self.assertEqual(manifest["observed_rgb_colors"], [[0, 0, 0], [128, 0, 0]])
 
@@ -230,7 +276,7 @@ class PreflightPathContractTests(unittest.TestCase):
             {"expected": 1, "missing": 0, "unique": 1, "ambiguous": 0},
         )
         self.assertEqual(
-            [entry["img_id"] for entry in with_optional["entries"]], [17, 18]
+            [entry["img_id"] for entry in with_optional["entries"]], [17]
         )
         self.assertEqual(
             with_optional["extras_inventory"],
@@ -242,7 +288,7 @@ class PreflightPathContractTests(unittest.TestCase):
         config = self._config()
         frame, metadata_hash = validate_release(config)
         report = self.output_root / "mask_validation_failure_report.json"
-        with self.assertRaisesRegex(PreflightError, "no VLM mask"):
+        with self.assertRaisesRegex(PreflightError, "analysis-only mask audit failed"):
             validate_images_and_masks(
                 config,
                 frame,
@@ -253,7 +299,39 @@ class PreflightPathContractTests(unittest.TestCase):
         self.assertEqual(failure["status"], "failed")
         self.assertEqual(failure["coverage"]["0"]["present"], 1)
         self.assertEqual(failure["coverage"]["1"]["present"], 0)
-        self.assertEqual(failure["failures"][0]["img_id"], 18)
+        self.assertEqual(failure["failures"], [])
+        protected = json.loads(
+            (self.output_root / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(protected["status"], "failed")
+        self.assertEqual(protected["failures"][0]["img_id"], 18)
+
+    def test_public_artifacts_cannot_reveal_official_split1_membership(self) -> None:
+        manifest, _ = self._validate()
+        manifest_path = self._freeze_manifest(manifest)
+        protected = load_analysis_only_mask_audit(self._config())
+        self.assertEqual(protected["schema_version"], ANALYSIS_ONLY_MASK_AUDIT_SCHEMA)
+        self.assertEqual([entry["img_id"] for entry in protected["entries"]], [18])
+        self.assertIn("metadata_index", protected["entries"][0])
+
+        public_paths = (
+            manifest_path,
+            self.output_root / "preflight" / "report.json",
+            self.output_root / "preflight" / "selector_mask_receipt.json",
+            self.output_root / "preflight" / "mask_visual_audit" / "manifest.json",
+        )
+        for path in public_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(self.VAL_IMAGE, text, path)
+            self.assertNotIn('"img_id": 18', text, path)
+            self.assertNotIn('"metadata_index"', text, path)
+            self.assertNotIn("oracle_val_mask_audit", text, path)
+
+        bank = load_vlm_mask_bank(self._config())
+        with self.assertRaisesRegex(PreflightError, "no matching row"):
+            bank.load(18, self.VAL_IMAGE)
 
     def test_ambiguous_exact_and_legacy_layouts_fail_closed(self) -> None:
         legacy = dict(teacher_map_candidates(self.mask_root, self.VAL_IMAGE))[
@@ -264,7 +342,7 @@ class PreflightPathContractTests(unittest.TestCase):
 
         config = self._config()
         frame, metadata_hash = validate_release(config)
-        with self.assertRaisesRegex(PreflightError, "ambiguous VLM masks"):
+        with self.assertRaisesRegex(PreflightError, "analysis-only mask audit failed"):
             validate_images_and_masks(
                 config,
                 frame,
@@ -319,7 +397,7 @@ class PreflightPathContractTests(unittest.TestCase):
         manifest, _ = self._validate()
 
         self.assertEqual(manifest["producer_name_collisions"], [])
-        self.assertEqual([entry["img_id"] for entry in manifest["entries"]], [1, 2])
+        self.assertEqual([entry["img_id"] for entry in manifest["entries"]], [1])
         self.assertEqual(
             manifest["optional_split_inventory"],
             {"expected": 1, "missing": 0, "unique": 1, "ambiguous": 0},
@@ -343,12 +421,18 @@ class PreflightPathContractTests(unittest.TestCase):
                 self._write_voc_mask(self._producer_path(self.VAL_IMAGE), **options)
                 config = self._config()
                 frame, metadata_hash = validate_release(config)
-                with self.assertRaisesRegex(PreflightError, expected):
+                with self.assertRaisesRegex(
+                    PreflightError, "analysis-only mask audit failed"
+                ):
                     validate_images_and_masks(
                         config,
                         frame,
                         metadata_sha256=metadata_hash,
                     )
+                protected_failure = (
+                    self.output_root / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH
+                ).read_text(encoding="utf-8")
+                self.assertIn(expected, protected_failure)
                 self._write_voc_mask(
                     self._producer_path(self.VAL_IMAGE), shifted=True
                 )
@@ -489,6 +573,15 @@ class PreflightPathContractTests(unittest.TestCase):
             load_vlm_mask_bank(config)
 
         self._producer_path(self.TRAIN_IMAGE).write_bytes(original_source)
+        source_image = self.release_root / self.TRAIN_IMAGE
+        original_image = source_image.read_bytes()
+        source_image.write_bytes(original_image + b"changed")
+        with self.assertRaisesRegex(
+            PreflightError, "Waterbirds source image no longer matches"
+        ):
+            load_vlm_mask_bank(config)
+        source_image.write_bytes(original_image)
+
         tampered = copy.deepcopy(manifest)
         tampered["entries"][0]["foreground_pixels"] += 1
         atomic_write_json(manifest_path, tampered)
@@ -511,7 +604,7 @@ class PreflightPathContractTests(unittest.TestCase):
         debug_config["runtime"] = {"debug": True}
         debug_config["resolved_config_sha256"] = "d" * 64
         bank = load_vlm_mask_bank(debug_config)
-        self.assertEqual(sorted(bank.entries), [17, 18])
+        self.assertEqual(sorted(bank.entries), [17])
 
         wrong_production_config = copy.deepcopy(debug_config)
         wrong_production_config["runtime"]["debug"] = False
@@ -522,6 +615,32 @@ class PreflightPathContractTests(unittest.TestCase):
         wrong_debug_contract["masks"]["minimum_foreground_fraction"] = 0.01
         with self.assertRaisesRegex(PreflightError, "contract is incompatible"):
             load_vlm_mask_bank(wrong_debug_contract)
+
+    def test_v3_requires_visual_receipt_and_lowercase_image_hash(self) -> None:
+        manifest, _ = self._validate()
+        manifest_path = self._freeze_manifest(manifest)
+        report_path = self.output_root / "preflight" / "report.json"
+
+        missing_visual = json.loads(manifest_path.read_text(encoding="utf-8"))
+        missing_visual.pop("visual_audit")
+        atomic_write_json(manifest_path, missing_visual)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report.pop("mask_visual_audit")
+        report["mask_manifest_sha256"] = sha256_file(manifest_path)
+        atomic_write_json(report_path, report)
+        with self.assertRaisesRegex(PreflightError, "v3 requires a visual-audit"):
+            load_vlm_mask_bank(self._config())
+
+        invalid_hash = copy.deepcopy(manifest)
+        invalid_hash["entries"][0]["image_sha256"] = "G" * 64
+        visual_audit = attach_synthetic_visual_audit(self.output_root, invalid_hash)
+        invalid_hash["visual_audit"] = visual_audit
+        atomic_write_json(manifest_path, invalid_hash)
+        report["mask_visual_audit"] = visual_audit
+        report["mask_manifest_sha256"] = sha256_file(manifest_path)
+        atomic_write_json(report_path, report)
+        with self.assertRaisesRegex(PreflightError, "entry is incompatible"):
+            load_vlm_mask_bank(self._config())
 
 
 if __name__ == "__main__":

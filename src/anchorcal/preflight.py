@@ -16,7 +16,9 @@ from .data import (
     validated_waterbirds100_official_splits,
 )
 from .errors import PreflightError
-from .io import atomic_write_json, atomic_write_yaml, sha256_file
+from .io import atomic_write_json, atomic_write_yaml, hash_object, sha256_file
+from .mask_identity import SELECTOR_MASK_RECEIPT_SCHEMA
+from .mask_visual_audit import render_mask_visual_audit
 from .pretrained import resolve_snapshot
 from .preprocessing import (
     preprocessing_from_manifest,
@@ -26,8 +28,12 @@ from .preprocessing import (
 from .prepare import prepare_geometry_artifacts
 from .runtime import git_state, save_environment_manifest, write_package_lock
 from .splits import construct_splits, persist_splits
+from .storage_budget import assess_storage_budget
 from .vlm_masks import (
+    ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
+    ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
     VLM_ALLOWED_CLASS_IDS,
+    VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS,
     VLM_DECODER_VERSION,
     VLM_FOREGROUND_CLASS_IDS,
     VLM_INTERPOLATION,
@@ -36,9 +42,11 @@ from .vlm_masks import (
     VLM_MASK_FORMAT,
     VLM_MASK_MANIFEST_SCHEMA,
     VLM_OPTIONAL_OFFICIAL_SPLITS,
+    VLM_PREFLIGHT_AUDITED_OFFICIAL_SPLITS,
     VLM_PRODUCER,
-    VLM_REQUIRED_OFFICIAL_SPLITS,
+    VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS,
     decode_vlm_mask,
+    foreground_area_summary,
     producer_vlm_mask_name,
     resolve_teacher_map,
     teacher_map_candidates,
@@ -85,7 +93,9 @@ def validate_images_and_masks(
     mask_config = config["masks"]
     minimum_fraction = float(mask_config["minimum_foreground_fraction"])
     maximum_fraction = float(mask_config["maximum_foreground_fraction"])
-    required_splits = set(VLM_REQUIRED_OFFICIAL_SPLITS)
+    audited_splits = set(VLM_PREFLIGHT_AUDITED_OFFICIAL_SPLITS)
+    selector_splits = set(VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS)
+    analysis_only_splits = set(VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS)
     optional_splits = set(VLM_OPTIONAL_OFFICIAL_SPLITS)
     problems: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
@@ -101,7 +111,7 @@ def validate_images_and_masks(
             # Split 2 is inventory-only and has no runtime mask contract.  It
             # therefore cannot create a fatal producer-name collision with a
             # required split-0/1 row (or with another split-2 row).
-            if int(row.split) in required_splits:
+            if int(row.split) in audited_splits:
                 producer_rows[producer_name].append(
                     {
                         "img_id": int(row.img_id),
@@ -180,7 +190,7 @@ def validate_images_and_masks(
                 optional_inventory["unique"] += 1
             else:
                 optional_inventory["ambiguous"] += 1
-        elif split in required_splits:
+        elif split in audited_splits:
             try:
                 mask_file, mapping_rule = resolve_teacher_map(
                     resolved_mask_root, str(row.img_filename)
@@ -217,6 +227,14 @@ def validate_images_and_masks(
                 if image_size is not None:
                     entry["image_width"] = int(image_size[0])
                     entry["image_height"] = int(image_size[1])
+                if image_file is not None and image_file.is_file():
+                    entry["image_relative_path"] = (
+                        image_file.resolve()
+                        .relative_to(resolved_image_root)
+                        .as_posix()
+                    )
+                    entry["image_sha256"] = sha256_file(image_file)
+                    entry["image_size_bytes"] = image_file.stat().st_size
                 if not reasons:
                     entries.append(entry)
             except (PreflightError, OSError, ValueError) as error:
@@ -232,47 +250,125 @@ def validate_images_and_masks(
                 }
             )
 
-    expected_required = int(frame["split"].isin(required_splits).sum())
-    coverage = {
+    expected_audited = int(frame["split"].isin(audited_splits).sum())
+    audited_coverage = {
         str(split): {
             "expected": int((frame["split"] == split).sum()),
             "present": sum(
                 int(entry["official_split"]) == split for entry in entries
             ),
         }
-        for split in sorted(required_splits)
+        for split in sorted(audited_splits)
     }
-    if problems or len(entries) != expected_required:
-        if len(entries) != expected_required and not problems:
+    if problems or len(entries) != expected_audited:
+        if len(entries) != expected_audited and not problems:
             problems.append(
                 {
                     "img_id": None,
                     "official_split": None,
                     "reasons": [
-                        f"required_mapping_count_{len(entries)}_expected_"
-                        f"{expected_required}"
+                        f"audited_mapping_count_{len(entries)}_expected_"
+                        f"{expected_audited}"
                     ],
                 }
             )
+        protected_problems = [
+            problem
+            for problem in problems
+            if problem.get("official_split")
+            in VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+        ]
+        public_problems = [
+            problem for problem in problems if problem not in protected_problems
+        ]
+        if protected_problems:
+            atomic_write_json(
+                Path(config["paths"]["output_root"])
+                / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
+                {
+                    "schema_version": ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
+                    "status": "failed",
+                    "namespace": "analysis_only",
+                    "selector_visible": False,
+                    "reporting_only": True,
+                    "official_splits": list(
+                        VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+                    ),
+                    "metadata_sha256": metadata_sha256,
+                    "resolved_config_sha256": config[
+                        "resolved_config_sha256"
+                    ],
+                    "failure_count": len(protected_problems),
+                    "failures": protected_problems,
+                },
+            )
         if failure_report_path is not None:
+            public_collisions = []
+            for collision in collisions:
+                public_rows = [
+                    row
+                    for row in collision["rows"]
+                    if int(row["official_split"])
+                    not in VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+                ]
+                if public_rows:
+                    public_collisions.append(
+                        {
+                            "producer_mask_name": collision[
+                                "producer_mask_name"
+                            ],
+                            "rows": public_rows,
+                        }
+                    )
             atomic_write_json(
                 failure_report_path,
                 {
                     "schema_version": "anchorcal-vlm-mask-validation-failure-v1",
                     "status": "failed",
-                    "failure_count": len(problems),
-                    "coverage": coverage,
-                    "producer_name_collisions": collisions,
-                    "failures": problems,
+                    "failure_count": len(public_problems),
+                    "coverage": audited_coverage,
+                    "analysis_only_mask_audit_status": (
+                        "failed" if protected_problems else "passed"
+                    ),
+                    "producer_name_collisions": public_collisions,
+                    "failures": public_problems,
                 },
             )
-        preview = json.dumps(problems[:20], indent=2)
+        preview = (
+            json.dumps(public_problems[:20], indent=2)
+            if public_problems
+            else "analysis-only mask audit failed; inspect protected audit"
+        )
         raise PreflightError(
             f"image/VLM audit failed for {len(problems)} conditions; "
             f"first failures:\n{preview}"
         )
 
     entries.sort(key=lambda item: int(item["img_id"]))
+    public_entries = [
+        {
+            key: value
+            for key, value in entry.items()
+            if key != "metadata_index"
+        }
+        for entry in entries
+        if int(entry["official_split"]) in selector_splits
+    ]
+    protected_entries = [
+        entry
+        for entry in entries
+        if int(entry["official_split"]) in analysis_only_splits
+    ]
+    expected_public = int(frame["split"].isin(selector_splits).sum())
+    expected_protected = int(frame["split"].isin(analysis_only_splits).sum())
+    if (
+        len(public_entries) != expected_public
+        or len(protected_entries) != expected_protected
+    ):
+        raise PreflightError(
+            "validated VLM rows do not partition into selector-safe split 0 "
+            "and analysis-only split 1"
+        )
     all_pngs = {
         path.resolve()
         for path in resolved_mask_root.rglob("*.png")
@@ -283,23 +379,73 @@ def validate_images_and_masks(
         for path in all_pngs - all_candidate_files
         if path.is_relative_to(resolved_mask_root)
     )
-    mapping_counts = Counter(str(entry["mapping_rule"]) for entry in entries)
+    mapping_counts = Counter(
+        str(entry["mapping_rule"]) for entry in public_entries
+    )
     class_pixel_counts: Counter[str] = Counter()
     observed_colors: set[tuple[int, int, int]] = set()
-    for entry in entries:
+    for entry in public_entries:
         class_pixel_counts.update(entry["class_pixel_counts"])
         observed_colors.update(
             tuple(int(channel) for channel in color)
             for color in entry["observed_rgb_colors"]
         )
     bank_hash = vlm_mask_bank_hash(
-        entries,
+        public_entries,
         root=resolved_mask_root,
         minimum_foreground_fraction=minimum_fraction,
         maximum_foreground_fraction=maximum_fraction,
     )
     if failure_report_path is not None:
         Path(failure_report_path).unlink(missing_ok=True)
+    protected_audit = {
+        "schema_version": ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
+        "status": "passed",
+        "namespace": "analysis_only",
+        "selector_visible": False,
+        "reporting_only": True,
+        "official_splits": list(VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS),
+        "dataset_root": str(resolved_image_root),
+        "metadata_path": str(Path(config["paths"]["metadata_path"]).resolve()),
+        "metadata_sha256": metadata_sha256,
+        "resolved_config_sha256": config["resolved_config_sha256"],
+        "mask_contract_sha256": vlm_mask_contract_hash(config),
+        "root": str(resolved_mask_root),
+        "producer": VLM_PRODUCER,
+        "mapping_mode": VLM_MAPPING_MODE,
+        "mapping_version": VLM_MAPPING_VERSION,
+        "decoder_version": VLM_DECODER_VERSION,
+        "format": VLM_MASK_FORMAT,
+        "foreground_class_ids": list(VLM_FOREGROUND_CLASS_IDS),
+        "allowed_class_ids": list(VLM_ALLOWED_CLASS_IDS),
+        "interpolation": VLM_INTERPOLATION,
+        "minimum_foreground_fraction": minimum_fraction,
+        "maximum_foreground_fraction": maximum_fraction,
+        "row_count": len(protected_entries),
+        "coverage": {
+            str(split): audited_coverage[str(split)]
+            for split in VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+        },
+        "mapping_rule_counts": dict(
+            sorted(
+                Counter(
+                    str(entry["mapping_rule"])
+                    for entry in protected_entries
+                ).items()
+            )
+        ),
+        "foreground_area_summary": foreground_area_summary(
+            protected_entries,
+            official_splits=VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS,
+        ),
+        "entries_sha256": hash_object(protected_entries),
+        "entries": protected_entries,
+    }
+    protected_audit_path = (
+        Path(config["paths"]["output_root"])
+        / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH
+    )
+    atomic_write_json(protected_audit_path, protected_audit)
     return {
         "schema_version": VLM_MASK_MANIFEST_SCHEMA,
         "status": "passed",
@@ -319,30 +465,39 @@ def validate_images_and_masks(
         "interpolation": VLM_INTERPOLATION,
         "minimum_foreground_fraction": minimum_fraction,
         "maximum_foreground_fraction": maximum_fraction,
-        "required_official_splits": list(VLM_REQUIRED_OFFICIAL_SPLITS),
+        "selector_required_official_splits": list(
+            VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS
+        ),
+        "analysis_only_audit_official_splits": list(
+            VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+        ),
         "optional_official_splits": list(VLM_OPTIONAL_OFFICIAL_SPLITS),
         "runtime_resolution": "frozen_manifest_only",
-        "required_count": expected_required,
+        "required_count": expected_public,
         "required_mapping_audit": {
-            "expected": expected_required,
-            "resolved_unique": len(entries),
+            "expected": expected_public,
+            "resolved_unique": len(public_entries),
             "missing": 0,
             "ambiguous": 0,
             "reused": 0,
             "producer_name_collisions": 0,
         },
-        "coverage": coverage,
+        "coverage": {
+            str(split): audited_coverage[str(split)]
+            for split in VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS
+        },
         "optional_split_inventory": optional_inventory,
         "producer_name_collisions": collisions,
         "mapping_rule_counts": dict(sorted(mapping_counts.items())),
         "aggregate_class_pixel_counts": dict(sorted(class_pixel_counts.items())),
         "observed_rgb_colors": [list(color) for color in sorted(observed_colors)],
+        "foreground_area_summary": foreground_area_summary(public_entries),
         "extras_inventory": {
             "count": len(extras),
             "relative_paths": extras,
         },
         "mask_bank_sha256": bank_hash,
-        "entries": entries,
+        "entries": public_entries,
     }
 
 
@@ -365,6 +520,10 @@ def run_preflight(
                 "WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/"
                 "val/prediction_cmap"
             ),
+            "fcv_split_manifest_root": (
+                "/home/ryreu/guided_cnn/logsWaterbird/"
+                "fcv_vit_waterbirds100_first_study/split_manifests"
+            ),
             "hf_home": "/home/ryreu/.cache/huggingface",
             "output_root": "/home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot",
         }
@@ -379,6 +538,13 @@ def run_preflight(
     splits_dir = output / "splits"
     environment_dir = output / "environment"
     preflight_dir.mkdir(parents=True, exist_ok=True)
+    storage_budget = assess_storage_budget(
+        config,
+        output,
+        stage="production_preflight" if require_gh200 else "preflight",
+    )
+    storage_budget_path = preflight_dir / "storage_budget.json"
+    atomic_write_json(storage_budget_path, storage_budget)
     repo_state = git_state(config["paths"]["repo_root"])
     if (
         bool(config.get("runtime", {}).get("require_clean_commit", False))
@@ -411,15 +577,55 @@ def run_preflight(
         failure_report_path=preflight_dir / "mask_validation_failure_report.json",
     )
     mask_manifest["git_commit"] = repo_state["commit"]
+    mask_visual_audit = render_mask_visual_audit(config, frame, mask_manifest)
+    mask_manifest["visual_audit"] = mask_visual_audit
     mask_manifest_path = preflight_dir / "mask_manifest.json"
     atomic_write_json(mask_manifest_path, mask_manifest)
-    splits = construct_splits(frame, metadata_hash)
+    selector_mask_receipt = {
+        "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+        "status": "passed",
+        "namespace": "selector_visible",
+        "contains_per_row_records": False,
+        "selector_required_official_splits": list(
+            VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS
+        ),
+        "resolved_config_sha256": config["resolved_config_sha256"],
+        "metadata_sha256": metadata_hash,
+        "git_commit": repo_state["commit"],
+        "mask_source": VLM_PRODUCER,
+        "mask_contract_sha256": mask_manifest["mask_contract_sha256"],
+        "mask_bank_sha256": mask_manifest["mask_bank_sha256"],
+        "mask_manifest_sha256": sha256_file(mask_manifest_path),
+        "foreground_area_summary_sha256": hash_object(
+            mask_manifest["foreground_area_summary"]
+        ),
+        "mask_visual_audit_manifest_sha256": mask_visual_audit[
+            "manifest_sha256"
+        ],
+        "mask_visual_audit_selection_sha256": mask_visual_audit[
+            "selection_sha256"
+        ],
+    }
+    selector_mask_receipt_path = preflight_dir / "selector_mask_receipt.json"
+    atomic_write_json(selector_mask_receipt_path, selector_mask_receipt)
+    splits = construct_splits(
+        frame,
+        metadata_hash,
+        fcv_split_manifest_root=config["paths"]["fcv_split_manifest_root"],
+        fcv_reference=config["data"]["fcv_reference"],
+        calibration_seed=int(config["data"]["expert_calibration_seed"]),
+    )
     split_manifest = persist_splits(
         splits,
         splits_dir,
+        analysis_only_output_dir=(
+            output / str(config["data"]["protected_split_root"])
+        ),
         source_metadata=frame,
         source_metadata_sha256=metadata_hash,
         source_release=str(config["data"]["release"]),
+        fcv_split_manifest_root=config["paths"]["fcv_split_manifest_root"],
+        fcv_reference=config["data"]["fcv_reference"],
     )
     model_manifest = resolve_snapshot(
         config["paths"]["hf_home"], allow_download=allow_download
@@ -446,9 +652,20 @@ def run_preflight(
         "mask_source": VLM_PRODUCER,
         "mask_contract_sha256": mask_manifest["mask_contract_sha256"],
         "mask_bank_sha256": mask_manifest["mask_bank_sha256"],
+        "foreground_area_summary": mask_manifest["foreground_area_summary"],
         "mask_manifest_path": str(mask_manifest_path.resolve()),
         "mask_manifest_sha256": sha256_file(mask_manifest_path),
+        "mask_visual_audit": mask_visual_audit,
+        "selector_mask_receipt": {
+            "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+            "sha256": sha256_file(selector_mask_receipt_path),
+        },
         "split_manifest": split_manifest,
+        "storage_budget": {
+            **storage_budget,
+            "manifest_path": str(storage_budget_path.resolve()),
+            "manifest_sha256": sha256_file(storage_budget_path),
+        },
         "geometry_manifest": geometry_manifest,
         "pretrained": model_manifest,
         "preprocessing": {

@@ -1546,6 +1546,21 @@ def evaluate_anchor_ladder(config: dict[str, Any]) -> dict[str, Any]:
             },
         },
     )
+    selector_mask_receipt_path = (
+        output / "preflight" / "selector_mask_receipt.json"
+    )
+    selector_mask_receipt_binding = preflight_report.get(
+        "selector_mask_receipt"
+    )
+    if (
+        not selector_mask_receipt_path.is_file()
+        or not isinstance(selector_mask_receipt_binding, dict)
+        or selector_mask_receipt_binding.get("sha256")
+        != sha256_file(selector_mask_receipt_path)
+    ):
+        raise PreflightError(
+            "anchor stage lacks a verified selector-safe mask receipt"
+        )
     receipt_root = output / ("debug/receipt" if config["runtime"]["debug"] else "receipt")
     receipt = write_decision_receipt(
         receipt_root,
@@ -1579,6 +1594,12 @@ def evaluate_anchor_ladder(config: dict[str, Any]) -> dict[str, Any]:
             "mask_manifest_sha256": preflight_report["mask_manifest_sha256"],
             "mask_source": preflight_report["mask_source"],
             "mask_contract": dict(config["masks"]),
+            "selector_mask_receipt": str(
+                selector_mask_receipt_path.resolve()
+            ),
+            "selector_mask_receipt_sha256": sha256_file(
+                selector_mask_receipt_path
+            ),
             "preprocessing_manifest_sha256": preflight_report["preprocessing"][
                 "manifest_sha256"
             ],

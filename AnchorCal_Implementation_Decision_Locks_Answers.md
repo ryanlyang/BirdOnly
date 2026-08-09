@@ -1,7 +1,7 @@
 # AnchorCal Waterbirds100 Pilot
-## Implementation Decision Locks and Answers to All 112 Pre-Implementation Questions
+## Implementation Decision Locks and Answers to All 114 Pre-Implementation Questions
 
-This document is the authoritative decision addendum for the AnchorCal Waterbirds100 pilot. It answers every question in the implementation-review inventory, preserves the original numbering, adds final residual locks 97 through 112, and resolves each ambiguity into an implementation lock.
+This document is the authoritative decision addendum for the AnchorCal Waterbirds100 pilot. It answers every question in the implementation-review inventory, preserves the original numbering, adds final residual locks 97 through 114, and resolves each ambiguity into an implementation lock.
 
 Where this addendum conflicts with the earlier implementation plan, **this addendum takes precedence**.
 
@@ -35,26 +35,35 @@ Most of the reviewer recommendations are accepted. The main clarifications or ov
 12. Eight-view saliency uses summed signed occurrence contributions at repeated source coordinates, avoiding unintended double averaging.
 13. Candidate and anchor token swapping share donor image IDs but use architecture-appropriate fixed token assignments.
 14. All remaining seeds, optimizer groups, scheduler timing, debug staging, and storage transaction rules are explicitly frozen.
+15. The development 80/20 partition reuses the exact Waterbirds100 FCV seed-0
+    membership; AnchorCal never creates a new seed-1729 partition.
+16. Selector-safe split artifacts omit per-example `metadata_index`, `place`,
+    and group fields;
+    protected oracle/test labels live under `analysis_only/splits/`.
+17. The user-audited Waterbirds100 VLM bank remains fixed, and preflight emits
+    split-0-only deterministic overlay sheets as hashed safety artifacts without
+    waiting for another human approval gate.
 
 ---
 
-# Authoritative Waterbirds100 Dataset and VLM-Mask Correction
+# Authoritative Waterbirds100 Dataset, FCV Split, and VLM-Mask Correction
 
 This section is the latest binding correction. It supersedes every conflicting
 Waterbirds-95-subset, CUB-mask, no-VLM, binary-source-encoding,
 relative-CUB-stem, and test-mask requirement in the implementation plan and in
 earlier answers below. In particular, it overrides the implementation plan's
-Sections 3.1, 3.2, and 5.1
+Sections 3.1, 3.2, 4.2, and 5.1
 and closing mask-source outlook; Summary items 1 and 9; Questions 2, 4, 89, and
-the mask-mapping portion of Question 108; the mask fields in the Final Resolved
+the split/mask-mapping portions of Questions 11, 12, 99, and 108; the data and
+mask fields in the Final Resolved
 Configuration Snapshot; and the mask entries under Remaining
 Environment-Specific Preflight Items. Non-conflicting requirements remain
 binding.
 
-This incompatible correction is versioned as AnchorCal package `0.4.0`,
-resolved configuration schema `anchorcal-config-v2`, VLM-mask manifest schema
-`anchorcal-vlm-mask-manifest-v2`, and split manifest schema
-`anchorcal-splits-v3`. Older schema artifacts cannot satisfy this campaign.
+This incompatible correction is versioned as AnchorCal package `0.5.0`,
+resolved configuration schema `anchorcal-config-v3`, VLM-mask manifest schema
+`anchorcal-vlm-mask-manifest-v3`, and split manifest schema
+`anchorcal-splits-v4`. Older schema artifacts cannot satisfy this campaign.
 
 The authoritative dataset is the dedicated Waterbirds-100 release:
 
@@ -70,6 +79,34 @@ and official split 2 is the reporting-only test set. Canonical sample identity
 remains metadata `img_id`; DataFrame row position is never an identity or join
 key.
 
+The candidate-training and biased-validation membership is the exact 80/20,
+class-stratified **seed-0 membership frozen by the existing Waterbirds100 FCV
+preflight**. AnchorCal imports and hash-verifies those canonical `img_id` lists;
+it does not independently resplit official split 0. Seed `0` is provenance for
+that frozen membership, not permission to generate a merely similar split. If
+the source FCV membership cannot be verified, preflight fails. Seed `1729` is
+retired. The nested 90/10 branch train/calibration partition is still derived
+inside the imported candidate-training membership with seed `2718`.
+
+The authoritative frozen FCV source is
+`/home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests`.
+Preflight verifies `manifest_bundle.json`, `split_indices.json`,
+`metadata_train.csv`, and `metadata_val.csv`, including their exact file hashes,
+embedded source metadata hash/counts, and membership hashes. It binds the
+imported metadata-index memberships back to complete official split 0. No
+regeneration fallback exists.
+
+Selector-safe development/expert CSVs and `splits/manifest.json` exclude
+per-example `metadata_index`, `place`, `group`, and `group_name`. Preflight may
+use protected source metadata to assert `y == place`, but redacts those fields
+before publishing selector-visible files. The public split manifest contains
+no rows, IDs, or count summaries from protected official split 1 or split 2 and
+no protected artifact path or hash; it records only the aggregate alignment
+pass and the frozen FCV source-artifact paths/hashes. Official oracle/test rows
+and their protected context/group labels live only below
+`analysis_only/splits/`; practical selector modules have no path, schema, or
+import dependency on that namespace.
+
 The authoritative mask source is the fixed OpenCLIP-LAION + DINOvIT WeCLIP+
 VLM `prediction_cmap` bank:
 
@@ -77,9 +114,11 @@ VLM `prediction_cmap` bank:
 /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
 ```
 
-This matching Waterbirds-100 bank is an audited pilot input, not official CUB
-ground truth. Do not mix it with CUB segmentations, historical WeCLIP+ output
-trees, the Waterbirds-95 VLM root, or another mask family.
+This matching Waterbirds-100 bank is a user-audited and accepted pilot input,
+not official CUB ground truth. That prior visual audit fixes the chosen bank but
+does not replace deterministic machine preflight. Do not mix it with CUB
+segmentations, historical WeCLIP+ output trees, the Waterbirds-95 VLM root, or
+another mask family.
 
 Join each metadata row from its complete dataset-relative `img_filename`.
 Reproduce `generate_pseudo_masks_waterbirds._make_image_id`: reject absolute or
@@ -101,31 +140,68 @@ does not implement this producer contract. Existing downstream requirements
 for Boolean masks, nearest-neighbor mask interpolation, joint geometry,
 dilation, purity, and source-resolution composition apply after this decode.
 
-Require complete one-to-one coverage for all official split-0 and split-1
-metadata rows. Official split 2 has no mask requirement, and missing test masks
-must not fail preflight. Mask-conditioned construction and evaluation use only
-split-0/1 rows. Official-test reporting evaluates untouched RGB images and must
-not attempt to load a mask. Extra mask files may be inventoried but cannot
-change the required set or become an implicit input.
+Require complete one-to-one public/runtime coverage for all official split-0
+metadata rows. Official split 1 is oracle-validation membership. Its maps may
+be machine-audited, but every per-row result lives only in
+`analysis_only/masks/waterbirds100_oracle_val_mask_audit.json`, schema
+`anchorcal-analysis-only-vlm-mask-audit-v1`, and is never parsed by practical
+selectors. Official split 2 has no mask requirement, and missing test masks
+must not fail preflight. Mask-conditioned branch construction and practical
+evaluation use only the public split-0 bank. Official-test reporting evaluates
+untouched RGB images and must not attempt to load a mask. Other source files
+may be inventoried without becoming an implicit selector/runtime input.
+`preflight/report.json` contains no protected mask-audit path or hash. The
+protected audit self-binds its source/data; hidden/campaign verification
+enforces its fixed path, and the scheduler checksum bundle may bind its bytes
+without making that reference an input to selector code.
 
 Preflight must publish `preflight/mask_manifest.json` with schema
-`anchorcal-vlm-mask-manifest-v2`, canonically sorted by `img_id`, before
+`anchorcal-vlm-mask-manifest-v3`, canonically sorted by `img_id`, before
 training. Its provenance binds the resolved dataset and metadata hash, exact
 VLM root, locked source identifier
 `waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`, mapping and
-decoder implementation versions, map format, foreground IDs `[1]`, required
-splits `[0, 1]`, and the AnchorCal configuration or checkout revision. The
+decoder implementation versions, map format, foreground IDs `[1]`, public
+runtime split `[0]`, and the AnchorCal configuration or checkout revision. The
 external GALS producer-source revision is not established; do not invent one
 or relabel the AnchorCal commit as that external revision.
 
-Each required-row entry records `img_id`, metadata audit index,
-`img_filename`, official split, derived producer name, resolved mask path,
+Each official split-0 entry records `img_id`, `img_filename`, official split,
+derived producer name, resolved mask path,
 mapping rule, image and mask dimensions, decoded color/class counts,
 foreground count or fraction, file size, and mask SHA-256. The manifest also
-records coverage by split, missing/ambiguous/collision/reuse reports, unused
-extras, and a deterministic SHA-256 over canonical serialized entries. All
-downstream branch, anchor, candidate, campaign, and decision receipts bind and
-reverify this frozen manifest hash; workers never repeat best-effort mapping.
+records split-0 coverage, missing/ambiguous/collision/reuse reports, unused
+extras, and a deterministic SHA-256 over canonical serialized entries. It
+contains no split-1 row, ID, count, path, or membership-derived summary.
+It also omits `metadata_index` from every public entry.
+Branch and candidate runtime may load this public split-0 bank; workers never
+repeat best-effort mapping.
+
+Final selector provenance reads only the compact
+`preflight/selector_mask_receipt.json`, schema
+`anchorcal-selector-mask-receipt-v1`. It binds public-bank hashes and aggregate
+source/configuration identity. Practical selection never parses the per-row
+mask manifest, imports the full VLM loader, or opens the protected split-1 mask
+audit. Its preflight report likewise contains no protected audit path, hash,
+count, or per-row fact. Hidden and final verification handle protected audit
+data separately.
+
+Preflight deterministically selects 18 overlay examples using a hash-bound plan
+over official split 0 only. Within each of its two aligned `(y, place)` cells,
+sort by foreground fraction and then `img_id`, form low-, middle-, and
+high-equal-count area strata, divide each stratum into three equal rank ranges,
+and take the middle example from each range. Protected `place` is used
+only internally for stratification and is never serialized per sample. No
+official split-1 membership or example appears in this public artifact. It
+writes three hashed
+six-sample sheets, `contact_sheet_01.png` through `contact_sheet_03.png`, under
+`preflight/mask_visual_audit/`. Each sample shows five labeled panels:
+Original RGB; Bird red/background blue; Mask white bird; Bird kept/background
+green; and Background kept/bird green. The manifest uses schema
+`anchorcal-mask-visual-audit-v1` and binds the selected IDs, public strata,
+rendering parameters, page hashes, and `human_approval_required=false`.
+Emitting and hashing these artifacts is mandatory. A new human approval is
+**not** a Slurm dependency or acceptance gate; the automated
+coverage, decoding, geometry, and mapping checks remain the blocking gates.
 
 ---
 
@@ -192,16 +268,24 @@ canonical `img_id` through the frozen `img_filename` mapping manifest.
 
 A valid mask bank must satisfy:
 
-- exactly one mask per required official split-0/1 Waterbirds `img_id`;
+- exactly one public/runtime mask per official split-0 Waterbirds `img_id`;
 - exact geometric correspondence with the Waterbirds composite image;
 - traceability to the exact VLM root, locked producer identifier, mapping and
   decoder implementation versions, and per-file SHA-256; do not claim an
   unknown external GALS producer-source revision;
 - no mix of mask sources inside the pilot.
 
-Resolve the bank once during preflight, publish the immutable mapping manifest,
-and require every later job to consume and verify that manifest. Do not replace,
-regenerate, or repair the locked masks inside this pilot.
+Resolve the public split-0 bank once during preflight and publish the immutable
+per-row mapping manifest. Branch/candidate runtime may consume that bank. Final
+selector provenance instead consumes only the compact selector-safe receipt;
+it never parses per-row mask records. Any split-1 per-row audit is protected as
+specified in the authoritative correction. Do not replace, regenerate, or
+repair the locked masks inside this pilot.
+
+The user has already visually audited and accepted this Waterbirds100 bank.
+Preflight nevertheless renders the three deterministic, hash-bound six-sample
+safety sheets defined in the authoritative correction above. Rendering is
+mandatory provenance, not a new human approval dependency.
 
 ---
 
@@ -221,8 +305,10 @@ Do not:
 - choose one duplicate arbitrarily;
 - attempt an automatic segmentation repair.
 
-The preflight report must list every offending required split-0/1 `img_id` and
-reason. Training begins only after the required bank passes completely. Missing
+The public preflight report may list offending required split-0 `img_id` values
+and reasons. Training begins only after the public split-0 bank passes
+completely. Split-1 per-row audit failures or details are written only to the
+protected mask-audit namespace, never the selector-readable report. Missing
 official split-2 masks are expected and are not offending rows.
 
 ---
@@ -413,20 +499,42 @@ Yes.
 Required files:
 
 ```text
+splits/waterbirds100_candidate_train.csv
+splits/waterbirds100_biased_val.csv
 splits/waterbirds100_expert_train.csv
 splits/waterbirds100_expert_calibration.csv
 splits/manifest.json
+
+analysis_only/splits/waterbirds100_oracle_val.csv
+analysis_only/splits/waterbirds100_test.csv
+analysis_only/splits/manifest.json
 ```
 
-Each file must include:
+Each selector-safe CSV under `splits/` has exactly these columns:
 
-- canonical `img_id`;
-- image path;
-- label;
-- place;
-- original official split;
-- split seed;
-- source metadata hash.
+```text
+img_id,img_filename,y,split,membership_source,membership_seed,
+source_metadata_sha256,source_membership_sha256
+```
+
+It must not contain per-example `metadata_index`, `place`, `group`,
+`group_name`, or another context-derived field. Preflight performs the complete
+official split-0 `y == place` assertion and FCV metadata-index binding from
+protected source metadata before redaction.
+
+The oracle/test CSVs and their per-example `place`/group labels are protected
+artifacts under `analysis_only/splits/`; their manifest uses schema
+`anchorcal-analysis-only-splits-v1`. Their exact columns are:
+
+```text
+img_id,metadata_index,img_filename,y,place,group,split,source_metadata_sha256
+```
+
+Practical selector modules have no path, schema, or import dependency on that
+directory. The selector-safe manifest includes no protected rows, IDs, count
+summaries, paths, or hashes. It records the aggregate training-alignment pass
+and the fixed FCV source artifact paths/hashes, which do not expose oracle/test
+membership.
 
 Also store:
 
@@ -436,10 +544,12 @@ Also store:
 - overlap assertions;
 - union assertion against the candidate-training pool.
 
-`splits/manifest.json` uses schema `anchorcal-splits-v3` and additionally binds
-the dedicated release, metadata hash, complete official split-0 membership and
-alignment audit, all derived split hashes, untouched official split-1 oracle
-membership, and untouched official split-2 reporting membership.
+`splits/manifest.json` uses schema `anchorcal-splits-v4` and additionally binds
+the dedicated release, metadata hash, exact source FCV seed-0 membership
+artifact and hashes, complete official split-0 membership and alignment-audit
+result, and all derived selector-safe split hashes. The protected manifest binds
+the untouched official split-1 oracle and split-2 reporting memberships and
+labels.
 
 ---
 
@@ -447,20 +557,31 @@ membership, and untouched official split-2 reporting membership.
 
 **Decision**
 
-Sort by canonical `img_id`, then perform fixed-seed stratified splitting.
+Reuse the existing Waterbirds100 FCV seed-0 80/20 membership exactly; do not
+perform a new top-level stratified split. Sort by canonical `img_id` for
+verification and serialization.
 
 **Implementation lock**
 
-1. Sort input rows by `img_id`.
-2. Stratify by class over the complete, preflight-validated Waterbirds100
-   official-training pool.
-3. Use the specified fixed seed.
-4. Let the selected splitting library perform deterministic integer allocation.
-5. Persist resulting IDs.
-6. Never regenerate the split during normal training if the persisted CSV exists.
-7. Verify that re-running the split script reproduces the same file hash.
+1. Load the two canonical ID lists frozen by the Waterbirds100 FCV seed-0
+   preflight from the locked `paths.fcv_split_manifest_root`.
+2. Verify the exact hashes and internal contracts of `manifest_bundle.json`,
+   `split_indices.json`, `metadata_train.csv`, and `metadata_val.csv`, then sort
+   each imported membership by `img_id`.
+3. Verify disjointness, class counts, and exact union against the complete,
+   preflight-validated Waterbirds100 official-training pool.
+4. Publish selector-safe copies without per-example context/group fields.
+5. Persist both source and derived hashes in `anchorcal-splits-v4`.
+6. Never regenerate the top-level membership during AnchorCal training.
+7. If the source membership is absent or fails verification, abort; do not fall
+   back to seed `1729`, library rounding, or a new seed-0 call.
+8. Within the imported `candidate_train` membership only, create the nested
+   `expert_train`/`expert_calibration` partition with the already locked seed
+   `2718`, sorted input order, and class stratification.
 
-This makes the split independent of filesystem ordering, DataFrame ordering, and worker scheduling.
+This makes the development split identical to the prior FCV study and
+independent of filesystem ordering, DataFrame ordering, worker scheduling, and
+future splitting-library behavior.
 
 ---
 
@@ -2175,7 +2296,10 @@ If reused, add unit tests under `tests/anchorcal`.
 
 **Decision**
 
-Yes for scheduler and architecture conventions:
+Yes. The current TIGRIS research-compute handoff is authoritative for the
+established scheduler, architecture, environment, Waterbirds release, VLM-bank
+path, producer-format, split-boundary, and storage-safety facts unless this
+decision sheet records a later, explicitly verified override.
 
 ```text
 login: tigris.rc.rit.edu
@@ -2186,14 +2310,18 @@ architecture: aarch64
 
 Remove A100-specific constraints.
 
-The previous handoff is not authoritative for:
-
-- current Python environment;
-- exact package versions;
-- current dataset paths;
-- compiled extensions.
-
-Run an ARM/GH200 environment preflight before any full job.
+AnchorCal-specific later locks are deliberate overrides only where named: the
+repository checkout is `/home/ryreu/guided_cnn/BirdOnly`, the campaign output is
+the ignored `BirdOnly/outputs/anchorcal/waterbirds100_pilot` tree, and the
+package/config/split schemas are defined here. The bounded rolling selected
+checkpoints and mandatory per-example selector/hidden HDF5 caches also
+deliberately override the handoff's general preference for aggregate-only
+storage; Question 96's explicit 40 GiB budget and preflight guard make that
+exception bounded and auditable. These overrides do not authorize guessing
+another dataset, mask bank, interpreter, package version, or compiled extension.
+Run an ARM/GH200 environment and path preflight before any full job, and treat a
+live mismatch as a failure requiring a documented, verified update rather than
+silently overriding the handoff.
 
 ---
 
@@ -2239,6 +2367,9 @@ WATERBIRDS_METADATA
 
 VLM_MASK_ROOT
 /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+
+FCV_SPLIT_MANIFEST_ROOT
+/home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
 ```
 
 Freeze these established TIGRIS paths in the local uncommitted configuration:
@@ -2254,9 +2385,17 @@ repo_root: /home/ryreu/guided_cnn/BirdOnly
 waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
 metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
 vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+fcv_split_manifest_root: /home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
 hf_home: /home/ryreu/.cache/huggingface
 output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 ```
+
+The repo-local `BirdOnly/outputs/...` campaign root is intentional even though
+the general handoff documents `/home/ryreu/guided_cnn/logsWaterbird` as the
+historical Waterbirds log convention. `outputs/` is ignored by Git, the launcher
+locks this exact resolved path, and all AnchorCal receipts and collectors treat
+it as the campaign root. Do not relocate it to `logsWaterbird` during this
+pilot.
 
 Preflight requirements:
 
@@ -2264,12 +2403,34 @@ Preflight requirements:
 - `metadata_path` must equal the authoritative metadata file under that release;
 - every official split-0 row must satisfy `y == place`, with no filtering used
   to manufacture that property;
+- the imported candidate-train/biased-validation IDs must exactly match the
+  hash-bound Waterbirds100 FCV seed-0 80/20 membership; seed `1729` is forbidden;
+- `fcv_split_manifest_root` must be the exact established source above and its
+  four required artifacts and embedded contracts must match the locked
+  `fcv_reference` hashes/counts;
+- selector-safe development/expert split artifacts must omit per-example
+  `metadata_index`, `place`, and group fields, while protected oracle/test
+  labels reside only under `analysis_only/splits/`;
 - `vlm_mask_root` must equal the exact Waterbirds-100 VLM root above;
-- the VLM bank must pass the producer-first `img_filename` join, strict VOC
-  class-1 decode, dimension, split-0/1 coverage, and one-mask-per-required-`img_id`
-  audits;
+- the public/runtime VLM bank must pass the producer-first `img_filename` join,
+  strict VOC class-1 decode, dimensions, split-0 coverage, and
+  one-mask-per-required-`img_id` audits;
 - preflight must write `preflight/mask_manifest.json` with schema
-  `anchorcal-vlm-mask-manifest-v2`, plus its immutable content hash;
+  `anchorcal-vlm-mask-manifest-v3`, plus its immutable content hash;
+- preflight must write the selector-safe compact mask receipt at
+  `preflight/selector_mask_receipt.json` with schema
+  `anchorcal-selector-mask-receipt-v1`; final selector provenance reads only
+  this receipt and never the full per-row mask manifest or VLM loader;
+- any split-1 per-row mask audit must live only at
+  `analysis_only/masks/waterbirds100_oracle_val_mask_audit.json`, schema
+  `anchorcal-analysis-only-vlm-mask-audit-v1`, and remain invisible to
+  practical selectors;
+- `preflight/report.json` must not contain the protected split-1 audit path or
+  hash; the protected audit self-binds its source/data and hidden/campaign
+  verification enforces its fixed path;
+- preflight must write and hash the deterministic safety sheets and index under
+  `preflight/mask_visual_audit/`; their production does not wait for another
+  human approval;
 - all paths are converted to absolute resolved paths;
 - path config is copied into the run manifest;
 - no training job starts while a `REQUIRED_ABSOLUTE_PATH` value remains.
@@ -2597,6 +2758,28 @@ Requirements:
 - one exclusive per-run lock preventing duplicate writers;
 - no 240 independent NPZ files.
 
+The campaign-wide storage contract is:
+
+```yaml
+hard_budget_gib: 40.0
+launch_guard_gib: 35.0
+minimum_filesystem_free_gib: 16.0
+worst_case_concurrent_growth_gib: 6.0
+projected_full_campaign_components_gib:
+  candidate_checkpoints: 6.0
+  restart_and_atomic_staging: 2.0
+  candidate_hdf5_and_analysis: 1.0
+  branches_and_anchors: 1.0
+  manifests_galleries_and_reserve: 2.0
+```
+
+The component projection totals 12 GiB. Preflight must hard-check the 40 GiB
+budget, the 35 GiB launch guard, at least 16 GiB of output-filesystem free
+space, and 6 GiB of possible concurrent growth. It publishes the hash-bound
+`preflight/storage_budget.json` receipt with schema
+`anchorcal-storage-preflight-v1`, and every writer verifies it. These are launch
+gates, not informational warnings.
+
 Suggested path:
 
 ```text
@@ -2612,10 +2795,11 @@ is the sole writer of cross-run summaries such as `all_candidates.csv`.
 # J. Final Residual Implementation Locks
 
 Questions 97 through 112 were added after a final cross-check of the plan and
-the first 96 answers. Where wording below conflicts with an earlier answer, the
-later numbered lock takes precedence. The corresponding earlier sections have
-also been repaired in place so an implementer does not need to reconcile two
-live alternatives.
+the first 96 answers; Questions 113 and 114 later lock the success-label
+definitions. Where wording below conflicts with an earlier answer, the later
+numbered lock takes precedence. The corresponding earlier sections have also
+been repaired in place so an implementer does not need to reconcile two live
+alternatives.
 
 ## 97. Which populated pretrained revision and runtime version are authoritative?
 
@@ -2675,10 +2859,12 @@ random_token_audit_seed: 8003
 debug_seed: 9001
 ```
 
-Existing seeds remain unchanged:
+Existing stochastic seeds remain unchanged except for the retired top-level
+development split. Its provenance is now the exact prior FCV membership:
 
 ```yaml
-split_seed: 1729
+fcv_development_split_seed: 0
+reuse_frozen_fcv_membership: true
 expert_calibration_seed: 2718
 candidate_seed: 1234
 selector_eval_seed: 16180
@@ -2687,8 +2873,9 @@ anchor_subset_seed: 424242
 ```
 
 Every stochastic purpose must use its named seed or a SHA-256-derived child seed.
-No unnamed call to a global RNG is permitted in data construction,
-interventions, bootstrapping, or auditing.
+Seed `0` above identifies a hash-verified existing membership and is not consumed
+by AnchorCal to generate a new top-level split. No unnamed call to a global RNG
+is permitted in data construction, interventions, bootstrapping, or auditing.
 
 ---
 
@@ -2880,11 +3067,21 @@ complete official split 0 is the development source. Preflight must assert that
 every one of those rows has `y == place`; it must not filter a Waterbirds-95
 training split to manufacture the source pool.
 
+The 80/20 candidate-training/biased-validation membership is the exact,
+hash-verified Waterbirds100 FCV seed-0 membership. AnchorCal must not run its own
+top-level split function. Seed `1729` is invalid for this campaign. After
+importing that membership, create only the nested expert calibration partition
+with seed `2718`. Publish candidate, biased-validation, and expert CSVs without
+per-example `metadata_index`, `place`, or group fields. Keep official
+split-1/split-2 rows and
+protected context/group labels under `analysis_only/splits/`.
+
 For this release, map the complete dataset-relative `img_filename` to
 the VLM PNG using the exact producer-compatible flattening rule in the
 Authoritative Waterbirds100 Dataset and VLM-Mask Correction. Do not preserve a
 nested class directory and do not map from row position or `img_id`. Require
-exact image and mask width/height for every required split-0/1 row.
+exact image and mask width/height for every public/runtime split-0 row. A
+separate split-1 machine audit, if performed, is analysis-only.
 
 Path configuration distinguishes:
 
@@ -2893,10 +3090,13 @@ vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/res
 ```
 
 Preflight must reject producer-name collisions, missing or ambiguous required
-maps, mask reuse, dimensional mismatches, and invalid VOC content. It freezes
-the accepted one-to-one mapping in `preflight/mask_manifest.json` with schema
-`anchorcal-vlm-mask-manifest-v2` and a deterministic hash. Official split 2 is
-outside the mask-coverage contract.
+split-0 maps, mask reuse, dimensional mismatches, and invalid VOC content. It
+freezes only the accepted split-0 one-to-one mapping in
+`preflight/mask_manifest.json` with schema
+`anchorcal-vlm-mask-manifest-v3` and a deterministic hash. Final selector
+provenance reads only `preflight/selector_mask_receipt.json`; it never parses
+that per-row manifest. Official split 1 is protected audit territory, and
+official split 2 is outside the mask-coverage contract.
 
 ---
 
@@ -3021,11 +3221,32 @@ the practical selection receipt is frozen.
 # Final Resolved Configuration Snapshot
 
 ```yaml
-schema_version: anchorcal-config-v2
+schema_version: anchorcal-config-v3
 
 data:
   release: waterbird_1.0_forest2water2
   waterbirds100_definition: "complete official split 0; hard-assert y == place"
+  split_manifest_schema: anchorcal-splits-v4
+  development_membership_source: waterbirds100_fcv_seed0
+  development_split_seed: 0
+  reuse_frozen_membership: true
+  expert_calibration_seed: 2718
+  selector_safe_split_root: splits
+  protected_split_root: analysis_only/splits
+  selector_safe_excludes: [metadata_index, place, group, group_name]
+  fcv_reference:
+    study_id: fcv_vit_waterbirds100_first_study
+    protocol_version: "1"
+    source_metadata_sha256: 220b3b54cc65fd195a6d1f4499f970cd143eca1a9ffbd948e8e8c6d86d366694
+    source_train_count: 4795
+    candidate_train_count: 3836
+    biased_val_count: 959
+    manifest_bundle_sha256: 10051eaa3f898abebeced3e4445b744f8e84e813d13888398564b01bf2d28cc5
+    split_indices_sha256: e26200da47d2810748fe386b3367752039f6e46d67028f3eabadff4dc8adc13f
+    candidate_train_csv_sha256: 5429550ba0cff705ec78a7a98f18128c0c8232f42bbbaac7351d74300a7dc114
+    biased_val_csv_sha256: 3856d6cd33455a00de56a5306433629ec00f9f72cd85434dc20e06d878e2a6ca
+    candidate_train_metadata_indices_sha256: b890276b5a5297c289a71b5081524882865827f01a93639196a05512534ba857
+    biased_val_metadata_indices_sha256: 10bcd762bd4937aac0ea526915f09773c93f24105db024ab869a936a6a5c7376
   canonical_id: img_id
   image_size: 224
   patch_size: 16
@@ -3043,15 +3264,15 @@ masks:
   mapping_mode: weclip_producer_first_with_explicit_legacy_fallbacks
   mapping_version: weclip-img-filename-v1
   decoder_version: pascal-voc-rgb-class-id-v1
-  manifest_schema: anchorcal-vlm-mask-manifest-v2
+  manifest_schema: anchorcal-vlm-mask-manifest-v3
   format: voc_colormap_class_ids
   foreground_class_ids: [1]
   allowed_class_ids: [0, 1]
   interpolation: nearest
   minimum_foreground_fraction: 0.0
   maximum_foreground_fraction: 1.0
-  required_official_splits: [0, 1]
-  optional_official_splits: [2]
+  required_official_splits: [0]
+  optional_official_splits: [1, 2]
   runtime_resolve_from_manifest_only: true
 
 paths:
@@ -3059,6 +3280,7 @@ paths:
   waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
   metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
   vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+  fcv_split_manifest_root: /home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot
 
@@ -3108,6 +3330,18 @@ optimization:
   warmup_start_factor: 0.01
   cosine_min_factor: 0.01
 
+storage:
+  hard_budget_gib: 40.0
+  launch_guard_gib: 35.0
+  minimum_filesystem_free_gib: 16.0
+  worst_case_concurrent_growth_gib: 6.0
+  projected_full_campaign_components_gib:
+    candidate_checkpoints: 6.0
+    restart_and_atomic_staging: 2.0
+    candidate_hdf5_and_analysis: 1.0
+    branches_and_anchors: 1.0
+    manifests_galleries_and_reserve: 2.0
+
 criteria:
   eligible:
     - ordinary_accuracy
@@ -3140,8 +3374,12 @@ The established TIGRIS data paths written into
 waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
 metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
 vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+fcv_split_manifest_root: /home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
 ```
 
 Preflight must verify these exact roots rather than substitute Waterbirds-95,
 historical WeCLIP+, or CUB paths. Their resolved values and the immutable VLM
-mapping-manifest hash become part of every run manifest.
+mapping-manifest hash become part of every run manifest. It must also import and
+hash-verify the four frozen FCV seed-0 split artifacts, publish only the exact
+selector-safe columns, and place protected official oracle/test records under
+the `anchorcal-analysis-only-splits-v1` namespace.

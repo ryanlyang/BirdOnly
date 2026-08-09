@@ -127,7 +127,7 @@ class PlainEvaluationDataset:
             image_size=self.preprocessing.image_size,
             resize_shortest=self.preprocessing.effective_resize_shortest,
         )
-        return {
+        sample = {
             "image": _tensor(
                 normalize_image(
                     transformed.image,
@@ -136,10 +136,11 @@ class PlainEvaluationDataset:
                 )
             ),
             "y": int(row.y),
-            "place": int(row.place),
-            "split": int(row.split),
             "img_id": int(row.img_id),
         }
+        if "place" in self.frame.columns:
+            sample["place"] = int(row.place)
+        return sample
 
 
 class BranchTrainingDataset:
@@ -290,8 +291,6 @@ class EvaluationDataset:
             "criterion_eligible": eligibility.eligible,
             "criterion_exclusion_reasons": eligibility.exclusion_reasons,
             "y": int(row.y),
-            "place": int(row.place),
-            "split": int(row.split),
             "img_id": int(row.img_id),
             "img_filename": str(row.img_filename),
         }
@@ -350,8 +349,6 @@ def collate_evaluation(samples: list[dict[str, Any]]) -> dict[str, Any]:
             sample["criterion_exclusion_reasons"] for sample in samples
         ],
         "y": torch.tensor([sample["y"] for sample in samples], dtype=torch.long),
-        "place": torch.tensor([sample["place"] for sample in samples], dtype=torch.long),
-        "split": torch.tensor([sample["split"] for sample in samples], dtype=torch.long),
         "img_id": torch.tensor([sample["img_id"] for sample in samples], dtype=torch.long),
         "img_filename": [sample["img_filename"] for sample in samples],
     }

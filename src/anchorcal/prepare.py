@@ -58,7 +58,6 @@ def geometry_table(
             {
                 "img_id": int(row.img_id),
                 "y": int(row.y),
-                "place": int(row.place),
                 "pure_foreground_count": len(eligibility.foreground_indices),
                 "safe_background_count": len(background),
                 "common_eligible": eligibility.eligible,

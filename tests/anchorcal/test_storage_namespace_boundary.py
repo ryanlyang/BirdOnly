@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+from anchorcal.errors import PreflightError
+from anchorcal.io import sha256_file
+from anchorcal.selector_anchor_verification import (
+    ANCHOR_ARTIFACT_KEYS,
+    ANCHOR_RESULT_KEYS,
+    _expected_paths,
+    verify_selector_anchor_artifacts,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,24 +25,41 @@ PACKAGE = SRC / "anchorcal"
 
 FORBIDDEN_SELECTOR_MODULES = {
     "analysis",
+    "analysis_only_splits",
+    "anchor_artifacts",
+    "branch_provenance",
     "campaign_verification",
     "candidate_pipeline",
     "checkpoint_verification",
     "checkpoints",
     "hidden_analysis",
     "hidden_storage",
+    "mask_visual_audit",
+    "preflight",
     "storage",
+    "vlm_masks",
 }
 FORBIDDEN_SELECTOR_IDENTIFIERS = {
     "HIDDEN_CHECKPOINT_SCHEMA_VERSION",
     "HIDDEN_SELECTORS",
     "_verify_hidden_checkpoint_artifacts",
     "verify_candidate_checkpoint_artifacts",
+    "load_vlm_mask_bank",
+    "VlmMaskBank",
 }
 FORBIDDEN_SELECTOR_LITERALS = {
     "anchorcal-hidden-checkpoints",
+    "anchorcal-analysis-only-splits",
+    "analysis_only/splits",
+    "waterbirds100_oracle_val.csv",
+    "waterbirds100_test.csv",
     "exploratory_hidden",
     "oracle_manifest.json",
+    "analysis_only/masks",
+    "waterbirds100_oracle_val_mask_audit.json",
+    "anchorcal-analysis-only-vlm-mask-audit",
+    "preflight/mask_manifest.json",
+    "preflight/report.json",
 }
 
 
@@ -82,6 +110,51 @@ def _selector_import_closure() -> dict[str, ast.AST]:
 
 
 class StorageNamespaceBoundaryTests(unittest.TestCase):
+    def test_selector_anchor_manifest_rejects_any_unreviewed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            config = {
+                "paths": {"output_root": str(output)},
+                "runtime": {"debug": False},
+                "resolved_config_sha256": "a" * 64,
+            }
+            records: dict[str, dict[str, object]] = {}
+            for name, path in _expected_paths(config).items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if name == "criterion_results":
+                    path.write_text(
+                        json.dumps({key: {} for key in ANCHOR_RESULT_KEYS}),
+                        encoding="utf-8",
+                    )
+                else:
+                    path.write_bytes(b"selector-safe fixture\n")
+                records[name] = {
+                    "path": str(path.relative_to(output)),
+                    "size_bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
+                }
+            self.assertEqual(set(records), ANCHOR_ARTIFACT_KEYS)
+            unexpected = output / "anchors" / "unreviewed.json"
+            unexpected.write_text("{}\n", encoding="utf-8")
+            records["unreviewed"] = {
+                "path": str(unexpected.relative_to(output)),
+                "size_bytes": unexpected.stat().st_size,
+                "sha256": sha256_file(unexpected),
+            }
+            manifest = {
+                "schema_version": "anchorcal-anchor-artifacts-v1",
+                "resolved_config_sha256": config["resolved_config_sha256"],
+                "criterion_result_keys": sorted(ANCHOR_RESULT_KEYS),
+                "files": records,
+            }
+            manifest_path = output / "anchors" / "artifact_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(PreflightError, "exactly allowlisted"):
+                verify_selector_anchor_artifacts(
+                    config, output / "missing_decision_receipt.json"
+                )
+
     def test_selector_analysis_imports_only_visible_storage_api(self) -> None:
         source = (SRC / "anchorcal" / "selector_analysis.py").read_text(
             encoding="utf-8"
@@ -157,6 +230,9 @@ import anchorcal.selector_analysis
 
 forbidden = {
     'anchorcal.analysis',
+    'anchorcal.analysis_only_splits',
+    'anchorcal.anchor_artifacts',
+    'anchorcal.branch_provenance',
     'anchorcal.campaign_verification',
     'anchorcal.candidate_pipeline',
     'anchorcal.checkpoint_verification',
@@ -164,6 +240,9 @@ forbidden = {
     'anchorcal.storage',
     'anchorcal.hidden_storage',
     'anchorcal.hidden_analysis',
+    'anchorcal.mask_visual_audit',
+    'anchorcal.preflight',
+    'anchorcal.vlm_masks',
 }
 loaded = forbidden.intersection(sys.modules)
 if loaded:
@@ -185,6 +264,39 @@ if 'anchorcal.visible_checkpoint_verification' not in sys.modules:
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_candidate_provenance_reads_only_compact_mask_receipt(self) -> None:
+        source = (SRC / "anchorcal" / "candidate_provenance.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        literals = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        self.assertTrue(any("selector_mask_receipt.json" in value for value in literals))
+        for forbidden in (
+            "mask_manifest.json",
+            "report.json",
+            "analysis_only/masks",
+            "oracle_val_mask_audit",
+        ):
+            self.assertFalse(
+                any(forbidden in value for value in literals),
+                f"candidate provenance names forbidden artifact {forbidden}",
+            )
+        identifiers = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+        } | {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        self.assertNotIn("load_vlm_mask_bank", identifiers)
+        self.assertNotIn("VlmMaskBank", identifiers)
 
     def test_visible_api_cannot_name_reporting_artifacts(self) -> None:
         source = (SRC / "anchorcal" / "selector_storage.py").read_text(

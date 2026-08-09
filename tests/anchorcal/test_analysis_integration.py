@@ -16,12 +16,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from anchorcal.analysis import run_final_analysis  # noqa: E402
+from anchorcal.splits import (  # noqa: E402
+    ANALYSIS_ONLY_SPLIT_COLUMNS,
+    ANALYSIS_ONLY_SPLIT_SCHEMA,
+    VISIBLE_SPLIT_COLUMNS,
+)
 from anchorcal.anchor_artifacts import verify_anchor_artifacts  # noqa: E402
 from anchorcal.branch_provenance import verify_branch_artifacts  # noqa: E402
 from anchorcal.candidate_schema import (  # noqa: E402
     CANDIDATE_SCALAR_METRICS,
     candidate_per_example_shapes,
 )
+from anchorcal.candidate_provenance import CANDIDATE_RUN_MANIFEST_SCHEMA  # noqa: E402
 from anchorcal.campaign_verification import (  # noqa: E402
     _verify_checksum_bundle,
     verify_campaign_artifacts,
@@ -29,6 +35,7 @@ from anchorcal.campaign_verification import (  # noqa: E402
 from anchorcal.checkpoints import CheckpointManager  # noqa: E402
 from anchorcal.errors import AuditFailure, PreflightError, StorageError  # noqa: E402
 from anchorcal.io import atomic_write_json, hash_object, sha256_file  # noqa: E402
+from anchorcal.mask_identity import SELECTOR_MASK_RECEIPT_SCHEMA  # noqa: E402
 from anchorcal.hidden_analysis import (  # noqa: E402
     REAL_QUALITY_TARGETS,
     _correlation_columns,
@@ -40,7 +47,10 @@ from anchorcal.storage import (  # noqa: E402
     PredictionBatch,
     SampleMetadata,
 )
+from anchorcal.storage_budget import STORAGE_PREFLIGHT_SCHEMA  # noqa: E402
 from anchorcal.vlm_masks import (  # noqa: E402
+    ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
+    ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
     VLM_ALLOWED_CLASS_IDS,
     VLM_DECODER_VERSION,
     VLM_FOREGROUND_CLASS_IDS,
@@ -51,12 +61,17 @@ from anchorcal.vlm_masks import (  # noqa: E402
     VLM_MASK_MANIFEST_SCHEMA,
     VLM_OPTIONAL_OFFICIAL_SPLITS,
     VLM_PRODUCER,
-    VLM_REQUIRED_OFFICIAL_SPLITS,
+    VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS,
+    VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS,
     decode_vlm_mask,
+    foreground_area_summary,
     producer_vlm_mask_name,
     vlm_mask_bank_hash,
     vlm_mask_contract_hash,
     vlm_mask_manifest_entry,
+)
+from tests.anchorcal.visual_audit_fixture import (  # noqa: E402
+    attach_synthetic_visual_audit,
 )
 
 
@@ -148,7 +163,12 @@ class AnalysisIntegrationTests(unittest.TestCase):
             "interpolation": VLM_INTERPOLATION,
             "minimum_foreground_fraction": 0.0,
             "maximum_foreground_fraction": 1.0,
-            "required_official_splits": list(VLM_REQUIRED_OFFICIAL_SPLITS),
+            "selector_required_official_splits": list(
+                VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS
+            ),
+            "analysis_only_audit_official_splits": list(
+                VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+            ),
             "optional_official_splits": list(VLM_OPTIONAL_OFFICIAL_SPLITS),
             "runtime_resolve_from_manifest_only": True,
         }
@@ -161,7 +181,10 @@ class AnalysisIntegrationTests(unittest.TestCase):
             },
             "masks": self.mask_contract,
             "runtime": {"debug": True},
-            "data": {"crop_fallback_rate_gate": 0.001},
+            "data": {
+                "crop_fallback_rate_gate": 0.001,
+                "protected_split_root": "analysis_only/splits",
+            },
             "resolved_config_sha256": self.config_hash,
             "candidate_grid": {
                 "learning_rates": [3.0e-5],
@@ -202,6 +225,13 @@ class AnalysisIntegrationTests(unittest.TestCase):
         preflight_root.mkdir(parents=True)
         preprocessing = preflight_root / "preprocessing_manifest.json"
         atomic_write_json(preprocessing, {"schema_version": "synthetic"})
+        storage_budget_path = preflight_root / "storage_budget.json"
+        storage_budget = {
+            "schema_version": STORAGE_PREFLIGHT_SCHEMA,
+            "status": "passed",
+            "stage": "synthetic_debug_preflight",
+        }
+        atomic_write_json(storage_budget_path, storage_budget)
 
         # This compact source bank exercises both required official-split labels
         # without attaching a mask to any synthetic oracle/test example below.
@@ -256,6 +286,11 @@ class AnalysisIntegrationTests(unittest.TestCase):
             )
             entry["image_width"] = 16
             entry["image_height"] = 12
+            entry["image_relative_path"] = image_path.relative_to(
+                self.waterbirds_root
+            ).as_posix()
+            entry["image_sha256"] = sha256_file(image_path)
+            entry["image_size_bytes"] = image_path.stat().st_size
             entries.append(entry)
         self.metadata_path.write_text(
             "\n".join(metadata_lines) + "\n", encoding="utf-8"
@@ -263,17 +298,27 @@ class AnalysisIntegrationTests(unittest.TestCase):
 
         minimum = self.mask_contract["minimum_foreground_fraction"]
         maximum = self.mask_contract["maximum_foreground_fraction"]
+        public_entries = [
+            {
+                key: value
+                for key, value in entry.items()
+                if key != "metadata_index"
+            }
+            for entry in entries
+            if int(entry["official_split"]) == 0
+        ]
+        protected_entries = [
+            entry for entry in entries if int(entry["official_split"]) == 1
+        ]
         mask_bank_sha256 = vlm_mask_bank_hash(
-            entries,
+            public_entries,
             root=self.vlm_mask_root,
             minimum_foreground_fraction=minimum,
             maximum_foreground_fraction=maximum,
         )
         mask_manifest_path = preflight_root / "mask_manifest.json"
         mask_contract_sha256 = vlm_mask_contract_hash(self.config)
-        atomic_write_json(
-            mask_manifest_path,
-            {
+        mask_manifest_payload = {
                 "schema_version": VLM_MASK_MANIFEST_SCHEMA,
                 "status": "passed",
                 "dataset_root": str(self.waterbirds_root.resolve()),
@@ -292,13 +337,18 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 "interpolation": VLM_INTERPOLATION,
                 "minimum_foreground_fraction": minimum,
                 "maximum_foreground_fraction": maximum,
-                "required_official_splits": list(VLM_REQUIRED_OFFICIAL_SPLITS),
+                "selector_required_official_splits": list(
+                    VLM_SELECTOR_REQUIRED_OFFICIAL_SPLITS
+                ),
+                "analysis_only_audit_official_splits": list(
+                    VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS
+                ),
                 "optional_official_splits": list(VLM_OPTIONAL_OFFICIAL_SPLITS),
                 "runtime_resolution": "frozen_manifest_only",
-                "required_count": len(entries),
+                "required_count": len(public_entries),
                 "required_mapping_audit": {
-                    "expected": len(entries),
-                    "resolved_unique": len(entries),
+                    "expected": len(public_entries),
+                    "resolved_unique": len(public_entries),
                     "missing": 0,
                     "ambiguous": 0,
                     "reused": 0,
@@ -306,7 +356,6 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 },
                 "coverage": {
                     "0": {"expected": 1, "present": 1},
-                    "1": {"expected": 1, "present": 1},
                 },
                 "optional_split_inventory": {
                     "expected": 0,
@@ -316,15 +365,84 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 },
                 "producer_name_collisions": [],
                 "mapping_rule_counts": {
-                    "weclip_producer_flattened_relative_stem": len(entries)
+                    "weclip_producer_flattened_relative_stem": len(public_entries)
                 },
-                "aggregate_class_pixel_counts": {"0": 312, "1": 72},
+                "aggregate_class_pixel_counts": {"0": 156, "1": 36},
                 "observed_rgb_colors": [[0, 0, 0], [128, 0, 0]],
+                "foreground_area_summary": foreground_area_summary(public_entries),
                 "extras_inventory": {"count": 0, "relative_paths": []},
                 "mask_bank_sha256": mask_bank_sha256,
-                "entries": entries,
+                "entries": public_entries,
+            }
+        protected_audit = {
+            "schema_version": ANALYSIS_ONLY_MASK_AUDIT_SCHEMA,
+            "status": "passed",
+            "namespace": "analysis_only",
+            "selector_visible": False,
+            "reporting_only": True,
+            "official_splits": list(VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS),
+            "dataset_root": str(self.waterbirds_root.resolve()),
+            "metadata_path": str(self.metadata_path.resolve()),
+            "metadata_sha256": sha256_file(self.metadata_path),
+            "resolved_config_sha256": self.config_hash,
+            "mask_contract_sha256": mask_contract_sha256,
+            "root": str(self.vlm_mask_root.resolve()),
+            "producer": VLM_PRODUCER,
+            "mapping_mode": VLM_MAPPING_MODE,
+            "mapping_version": VLM_MAPPING_VERSION,
+            "decoder_version": VLM_DECODER_VERSION,
+            "format": VLM_MASK_FORMAT,
+            "foreground_class_ids": list(VLM_FOREGROUND_CLASS_IDS),
+            "allowed_class_ids": list(VLM_ALLOWED_CLASS_IDS),
+            "interpolation": VLM_INTERPOLATION,
+            "minimum_foreground_fraction": minimum,
+            "maximum_foreground_fraction": maximum,
+            "row_count": len(protected_entries),
+            "coverage": {"1": {"expected": 1, "present": 1}},
+            "mapping_rule_counts": {
+                "weclip_producer_flattened_relative_stem": len(protected_entries)
             },
+            "foreground_area_summary": foreground_area_summary(
+                protected_entries,
+                official_splits=VLM_ANALYSIS_ONLY_AUDIT_OFFICIAL_SPLITS,
+            ),
+            "entries_sha256": hash_object(protected_entries),
+            "entries": protected_entries,
+        }
+        atomic_write_json(
+            self.output / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH,
+            protected_audit,
         )
+        visual_audit = attach_synthetic_visual_audit(
+            self.output, mask_manifest_payload
+        )
+        mask_manifest_payload["visual_audit"] = visual_audit
+        atomic_write_json(mask_manifest_path, mask_manifest_payload)
+        selector_mask_receipt = {
+            "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+            "status": "passed",
+            "namespace": "selector_visible",
+            "contains_per_row_records": False,
+            "selector_required_official_splits": [0],
+            "resolved_config_sha256": self.config_hash,
+            "metadata_sha256": sha256_file(self.metadata_path),
+            "git_commit": "d" * 40,
+            "mask_source": VLM_PRODUCER,
+            "mask_contract_sha256": mask_contract_sha256,
+            "mask_bank_sha256": mask_bank_sha256,
+            "mask_manifest_sha256": sha256_file(mask_manifest_path),
+            "foreground_area_summary_sha256": hash_object(
+                foreground_area_summary(public_entries)
+            ),
+            "mask_visual_audit_manifest_sha256": visual_audit[
+                "manifest_sha256"
+            ],
+            "mask_visual_audit_selection_sha256": visual_audit[
+                "selection_sha256"
+            ],
+        }
+        selector_mask_receipt_path = preflight_root / "selector_mask_receipt.json"
+        atomic_write_json(selector_mask_receipt_path, selector_mask_receipt)
         atomic_write_json(
             preflight_root / "report.json",
             {
@@ -336,8 +454,19 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 "mask_source": VLM_PRODUCER,
                 "mask_contract_sha256": mask_contract_sha256,
                 "mask_bank_sha256": mask_bank_sha256,
+                "foreground_area_summary": foreground_area_summary(public_entries),
+                "mask_visual_audit": visual_audit,
                 "mask_manifest_path": str(mask_manifest_path.resolve()),
                 "mask_manifest_sha256": sha256_file(mask_manifest_path),
+                "selector_mask_receipt": {
+                    "schema_version": SELECTOR_MASK_RECEIPT_SCHEMA,
+                    "sha256": sha256_file(selector_mask_receipt_path),
+                },
+                "storage_budget": {
+                    **storage_budget,
+                    "manifest_path": str(storage_budget_path.resolve()),
+                    "manifest_sha256": sha256_file(storage_budget_path),
+                },
                 "preprocessing": {"manifest_sha256": sha256_file(preprocessing)},
                 "git": {"commit": "d" * 40},
             },
@@ -351,27 +480,80 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 "img_id": [1, 2, 3, 4],
                 "img_filename": ["a", "b", "c", "d"],
                 "y": [0, 0, 1, 1],
-                "place": [0, 0, 1, 1],
                 "split": [0, 0, 0, 0],
+                "membership_source": ["synthetic/frozen"] * 4,
+                "membership_seed": [0] * 4,
+                "source_metadata_sha256": [sha256_file(self.metadata_path)] * 4,
+                "source_membership_sha256": ["b" * 64] * 4,
             }
-        )
+        ).loc[:, VISIBLE_SPLIT_COLUMNS]
         biased.to_csv(root / "waterbirds100_biased_val.csv", index=False)
         geometry = self.output / "debug" / "preflight" / "geometry"
         geometry.mkdir(parents=True)
         biased.to_csv(geometry / "selector_eval_subset.csv", index=False)
         atomic_write_json(geometry / "background_token_budget.json", {"token_budget": 64})
+        source_metadata_sha256 = sha256_file(self.metadata_path)
         hidden = pd.DataFrame(
             {
                 "img_id": np.arange(10, 18),
+                "metadata_index": np.arange(10, 18),
                 "img_filename": [str(value) for value in range(8)],
                 "y": [0, 0, 0, 0, 1, 1, 1, 1],
                 "place": [0, 0, 1, 1, 0, 0, 1, 1],
+                "group": [0, 0, 1, 1, 2, 2, 3, 3],
                 "split": [1] * 8,
+                "source_metadata_sha256": [source_metadata_sha256] * 8,
             }
-        )
-        hidden.to_csv(root / "waterbirds100_oracle_val.csv", index=False)
-        hidden.assign(split=2, img_id=np.arange(20, 28)).to_csv(
-            root / "waterbirds100_test.csv", index=False
+        ).loc[:, ANALYSIS_ONLY_SPLIT_COLUMNS]
+        protected_root = self.output / "analysis_only" / "splits"
+        protected_root.mkdir(parents=True)
+        protected_frames = {
+            "oracle_val": hidden,
+            "test": hidden.assign(
+                split=2,
+                img_id=np.arange(20, 28),
+                metadata_index=np.arange(20, 28),
+            ),
+        }
+        split_records = {}
+        for name, frame in protected_frames.items():
+            path = protected_root / f"waterbirds100_{name}.csv"
+            frame.to_csv(path, index=False)
+            split_records[name] = {
+                "path": str(path.resolve()),
+                "sha256": sha256_file(path),
+                "columns": list(ANALYSIS_ONLY_SPLIT_COLUMNS),
+                "rows": len(frame),
+                "class_counts": {
+                    str(key): int(value)
+                    for key, value in frame["y"].value_counts().sort_index().items()
+                },
+                "place_counts": {
+                    str(key): int(value)
+                    for key, value in frame["place"].value_counts().sort_index().items()
+                },
+                "group_counts": {
+                    str(key): int(value)
+                    for key, value in frame["group"].value_counts().sort_index().items()
+                },
+                "empirical_correlation": float((frame["y"] == frame["place"]).mean()),
+            }
+        atomic_write_json(
+            protected_root / "manifest.json",
+            {
+                "schema_version": ANALYSIS_ONLY_SPLIT_SCHEMA,
+                "namespace": "analysis_only",
+                "reporting_only": True,
+                "source_release": "waterbird_1.0_forest2water2",
+                "source_metadata_sha256": source_metadata_sha256,
+                "protected_columns": ["place", "group"],
+                "splits": split_records,
+                "contract_assertions": {
+                    "oracle_val_test_disjoint": True,
+                    "development_hidden_disjoint": True,
+                    "group_equals_two_y_plus_place": True,
+                },
+            },
         )
 
     def _write_anchor_artifacts(self) -> None:
@@ -702,6 +884,16 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 ),
                 "mask_source": VLM_PRODUCER,
                 "mask_contract": self.config["masks"],
+                "selector_mask_receipt": str(
+                    (
+                        self.output
+                        / "preflight"
+                        / "selector_mask_receipt.json"
+                    ).resolve()
+                ),
+                "selector_mask_receipt_sha256": sha256_file(
+                    self.output / "preflight" / "selector_mask_receipt.json"
+                ),
                 "anchor_artifact_manifest": str(artifact_manifest.resolve()),
                 "anchor_artifact_manifest_sha256": sha256_file(artifact_manifest),
                 "criterion_results_sha256": sha256_file(
@@ -722,10 +914,13 @@ class AnalysisIntegrationTests(unittest.TestCase):
         preflight = self.output / "preflight" / "report.json"
         anchor_receipt = next((self.output / "debug" / "receipt").glob("anchorcal_decision_*.json"))
         preflight_payload = json.loads(preflight.read_text(encoding="utf-8"))
+        selector_mask_receipt = (
+            self.output / "preflight" / "selector_mask_receipt.json"
+        )
         atomic_write_json(
             run / "run_manifest.json",
             {
-                "schema_version": "anchorcal-candidate-run-v3",
+                "schema_version": CANDIDATE_RUN_MANIFEST_SCHEMA,
                 "run_id": run_id,
                 "learning_rate": 3.0e-5,
                 "weight_decay": 0.05,
@@ -735,6 +930,11 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 "resolved_config_sha256": self.config_hash,
                 "preflight_report": str(preflight.resolve()),
                 "preflight_report_sha256": sha256_file(preflight),
+                "selector_mask_receipt": str(selector_mask_receipt.resolve()),
+                "selector_mask_receipt_sha256": sha256_file(
+                    selector_mask_receipt
+                ),
+                "metadata_sha256": preflight_payload["metadata_sha256"],
                 "mask_bank_sha256": preflight_payload["mask_bank_sha256"],
                 "mask_manifest_sha256": preflight_payload[
                     "mask_manifest_sha256"
@@ -932,7 +1132,8 @@ class AnalysisIntegrationTests(unittest.TestCase):
         )
         original = json.loads(manifest.read_text(encoding="utf-8"))
         cases = {
-            "schema_version": "anchorcal-candidate-run-v2",
+            "schema_version": "anchorcal-candidate-run-v3",
+            "selector_mask_receipt_sha256": "1" * 64,
             "mask_bank_sha256": "0" * 64,
             "mask_manifest_sha256": "f" * 64,
             "mask_source": "another-mask-source",
@@ -949,13 +1150,43 @@ class AnalysisIntegrationTests(unittest.TestCase):
                     run_selector_stage(self.config)
         atomic_write_json(manifest, original)
 
-    def test_selector_rejects_vlm_source_changed_after_candidate_run(self) -> None:
-        source_mask = next(self.vlm_mask_root.glob("*.png"))
+    def test_selector_never_opens_vlm_source_but_hidden_stage_rejects_tamper(self) -> None:
+        public_manifest = json.loads(
+            (self.output / "preflight" / "mask_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        source_mask = self.vlm_mask_root / public_manifest["entries"][0][
+            "relative_path"
+        ]
         source_mask.write_bytes(b"changed after candidate evaluation\n")
+        selected = run_selector_stage(self.config)
+        self.assertEqual(selected["anchorcal_winner"], "saliency_harmonic")
         with self.assertRaisesRegex(
             PreflightError, "source file no longer matches manifest"
         ):
+            run_final_analysis(self.config)
+
+    def test_selector_rejects_compact_mask_receipt_tamper(self) -> None:
+        receipt = self.output / "preflight" / "selector_mask_receipt.json"
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        payload["mask_bank_sha256"] = "0" * 64
+        atomic_write_json(receipt, payload)
+        with self.assertRaisesRegex(
+            PreflightError, "selector-safe AnchorCal decision provenance"
+        ):
             run_selector_stage(self.config)
+
+    def test_hidden_stage_rejects_protected_mask_audit_tamper(self) -> None:
+        run_selector_stage(self.config)
+        audit = self.output / ANALYSIS_ONLY_MASK_AUDIT_RELATIVE_PATH
+        payload = json.loads(audit.read_text(encoding="utf-8"))
+        payload["entries"][0]["img_filename"] = "changed.jpg"
+        atomic_write_json(audit, payload)
+        with self.assertRaisesRegex(
+            PreflightError, "analysis-only VLM mask audit"
+        ):
+            run_final_analysis(self.config)
 
     def test_hidden_stage_rejects_checkpoint_manifest_changed_after_receipt(self) -> None:
         run_selector_stage(self.config)
@@ -975,7 +1206,7 @@ class AnalysisIntegrationTests(unittest.TestCase):
         )
         original = json.loads(manifest.read_text(encoding="utf-8"))
         for field, value in (
-            ("schema_version", "anchorcal-candidate-run-v2"),
+            ("schema_version", "anchorcal-candidate-run-v3"),
             ("mask_manifest_sha256", "f" * 64),
         ):
             with self.subTest(field=field):

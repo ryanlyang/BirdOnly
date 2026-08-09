@@ -1,7 +1,15 @@
-schema_version: anchorcal-config-v2
+schema_version: anchorcal-config-v3
 
 data:
   release: waterbird_1.0_forest2water2
+  waterbirds100_definition: "complete official split 0; hard-assert y == place"
+  split_manifest_schema: anchorcal-splits-v4
+  development_membership_source: waterbirds100_fcv_seed0
+  development_split_seed: 0
+  reuse_frozen_membership: true
+  selector_safe_split_root: splits
+  protected_split_root: analysis_only/splits
+  selector_safe_excludes: [metadata_index, place, group, group_name]
   canonical_id: img_id
   image_field: img_filename
   label_field: y
@@ -12,8 +20,20 @@ data:
   official_test_value: 2
   candidate_train_fraction: 0.80
   expert_calibration_fraction: 0.10
-  split_seed: 1729
   expert_calibration_seed: 2718
+  fcv_reference:
+    study_id: fcv_vit_waterbirds100_first_study
+    protocol_version: "1"
+    source_metadata_sha256: 220b3b54cc65fd195a6d1f4499f970cd143eca1a9ffbd948e8e8c6d86d366694
+    source_train_count: 4795
+    candidate_train_count: 3836
+    biased_val_count: 959
+    manifest_bundle_sha256: 10051eaa3f898abebeced3e4445b744f8e84e813d13888398564b01bf2d28cc5
+    split_indices_sha256: e26200da47d2810748fe386b3367752039f6e46d67028f3eabadff4dc8adc13f
+    candidate_train_csv_sha256: 5429550ba0cff705ec78a7a98f18128c0c8232f42bbbaac7351d74300a7dc114
+    biased_val_csv_sha256: 3856d6cd33455a00de56a5306433629ec00f9f72cd85434dc20e06d878e2a6ca
+    candidate_train_metadata_indices_sha256: b890276b5a5297c289a71b5081524882865827f01a93639196a05512534ba857
+    biased_val_metadata_indices_sha256: 10bcd762bd4937aac0ea526915f09773c93f24105db024ab869a936a6a5c7376
   image_size: 224
   patch_size: 16
   evaluation_crop_pct: 0.9
@@ -30,14 +50,15 @@ masks:
   mapping_mode: weclip_producer_first_with_explicit_legacy_fallbacks
   mapping_version: weclip-img-filename-v1
   decoder_version: pascal-voc-rgb-class-id-v1
-  manifest_schema: anchorcal-vlm-mask-manifest-v2
+  manifest_schema: anchorcal-vlm-mask-manifest-v3
   format: voc_colormap_class_ids
   foreground_class_ids: [1]
   allowed_class_ids: [0, 1]
   interpolation: nearest
   minimum_foreground_fraction: 0.0
   maximum_foreground_fraction: 1.0
-  required_official_splits: [0, 1]
+  selector_required_official_splits: [0]
+  analysis_only_audit_official_splits: [1]
   optional_official_splits: [2]
   runtime_resolve_from_manifest_only: true
 
@@ -119,6 +140,21 @@ optimization:
   persistent_workers: true
   prefetch_factor: 2
 
+storage:
+  # Conservative peak projection for six concurrent candidate jobs with
+  # bounded rolling checkpoints, restart states, paired HDF5 outputs, branch
+  # states, reports, and atomic-publication staging.
+  hard_budget_gib: 40.0
+  launch_guard_gib: 35.0
+  minimum_filesystem_free_gib: 16.0
+  worst_case_concurrent_growth_gib: 6.0
+  projected_full_campaign_components_gib:
+    candidate_checkpoints: 6.0
+    restart_and_atomic_staging: 2.0
+    candidate_hdf5_and_analysis: 1.0
+    branches_and_anchors: 1.0
+    manifests_galleries_and_reserve: 2.0
+
 runtime:
   debug: false
   account: reu-aisocial
@@ -133,5 +169,6 @@ paths:
   waterbirds_root: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2
   metadata_path: /home/ryreu/guided_cnn/waterbirds/waterbird_1.0_forest2water2/metadata.csv
   vlm_mask_root: /home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap
+  fcv_split_manifest_root: /home/ryreu/guided_cnn/logsWaterbird/fcv_vit_waterbirds100_first_study/split_manifests
   hf_home: /home/ryreu/.cache/huggingface
   output_root: /home/ryreu/guided_cnn/BirdOnly/outputs/anchorcal/waterbirds100_pilot

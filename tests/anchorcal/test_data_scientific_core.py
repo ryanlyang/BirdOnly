@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sys
 import tempfile
@@ -16,6 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from anchorcal.config import deep_merge, validate_locked_config  # noqa: E402
 from anchorcal import __version__  # noqa: E402
+from anchorcal.analysis_only_splits import load_analysis_only_splits  # noqa: E402
 from anchorcal.data import load_metadata  # noqa: E402
 from anchorcal.errors import ConfigurationError, PreflightError  # noqa: E402
 from anchorcal.io import read_yaml, sha256_file  # noqa: E402
@@ -31,7 +33,13 @@ from anchorcal.seeds import (  # noqa: E402
     stable_seed,
     stateless_rng,
 )
-from anchorcal.splits import construct_splits, persist_splits  # noqa: E402
+from anchorcal.splits import (  # noqa: E402
+    ANALYSIS_ONLY_SPLIT_COLUMNS,
+    ANALYSIS_ONLY_SPLIT_SCHEMA,
+    VISIBLE_SPLIT_COLUMNS,
+    construct_splits,
+    persist_splits,
+)
 
 
 class SeedAndConfigurationContractTests(unittest.TestCase):
@@ -302,29 +310,136 @@ class SplitContractTests(unittest.TestCase):
                             }
                         )
                         img_id += 1
-        return pd.DataFrame(rows)
+        frame = pd.DataFrame(rows)
+        frame["metadata_row_index"] = np.arange(len(frame), dtype=np.int64)
+        return frame
 
-    @classmethod
+    def _fcv_artifacts(
+        self,
+        metadata: pd.DataFrame,
+        metadata_sha256: str,
+    ) -> tuple[Path, dict[str, object]]:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        train = metadata.loc[metadata["split"] == 0].sort_values(
+            "metadata_row_index"
+        )
+        biased_parts = []
+        for label in (0, 1):
+            members = train.loc[train["y"] == label, "metadata_row_index"].astype(int)
+            biased_parts.extend(members.iloc[-round(len(members) * 0.20) :].tolist())
+        biased = sorted(int(value) for value in biased_parts)
+        candidate = sorted(
+            set(train["metadata_row_index"].astype(int).tolist()) - set(biased)
+        )
+
+        def membership_hash(values: list[int]) -> str:
+            return hashlib.sha256(
+                ",".join(str(value) for value in values).encode("ascii")
+            ).hexdigest()
+
+        candidate_hash = membership_hash(candidate)
+        biased_hash = membership_hash(biased)
+        indices = {
+            "candidate_train_indices_sha256": candidate_hash,
+            "candidate_train_metadata_indices": candidate,
+            "biased_validation_indices_sha256": biased_hash,
+            "biased_validation_metadata_indices": biased,
+            "metadata_path": "/frozen/source/metadata.csv",
+            "metadata_sha256": metadata_sha256,
+            "split_seed": 0,
+            "stratify_by": "y",
+            "train_fraction": 0.8,
+            "validation_fraction": 0.2,
+        }
+        split_indices_path = root / "split_indices.json"
+        split_indices_path.write_text(
+            json.dumps(indices, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        candidate_csv = root / "metadata_train.csv"
+        biased_csv = root / "metadata_val.csv"
+        pd.DataFrame({"metadata_index": candidate}).to_csv(candidate_csv, index=False)
+        pd.DataFrame({"metadata_index": biased}).to_csv(biased_csv, index=False)
+        bundle = {
+            "artifact_type": "fcv_vit_waterbirds100_manifest_bundle",
+            "status": "complete",
+            "study_id": "fcv_vit_waterbirds100_first_study",
+            "protocol_version": "1",
+            "original_metadata_sha256": metadata_sha256,
+            "split_indices_sha256": sha256_file(split_indices_path),
+            "holdout": {
+                "split_seed": 0,
+                "stratify_by": "y",
+                "train_fraction": 0.8,
+                "validation_fraction": 0.2,
+                "source_split": "train",
+                "require_complete_shortcut_correlation": True,
+                "reuse_identical_indices_for_all_candidates": True,
+            },
+        }
+        manifest_path = root / "manifest_bundle.json"
+        manifest_path.write_text(
+            json.dumps(bundle, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        reference: dict[str, object] = {
+            "study_id": bundle["study_id"],
+            "protocol_version": bundle["protocol_version"],
+            "source_metadata_sha256": metadata_sha256,
+            "source_train_count": len(train),
+            "candidate_train_count": len(candidate),
+            "biased_val_count": len(biased),
+            "manifest_bundle_sha256": sha256_file(manifest_path),
+            "split_indices_sha256": sha256_file(split_indices_path),
+            "candidate_train_csv_sha256": sha256_file(candidate_csv),
+            "biased_val_csv_sha256": sha256_file(biased_csv),
+            "candidate_train_metadata_indices_sha256": candidate_hash,
+            "biased_val_metadata_indices_sha256": biased_hash,
+        }
+        return root, reference
+
+    def _construct(
+        self, metadata: pd.DataFrame, metadata_sha256: str
+    ) -> dict[str, pd.DataFrame]:
+        root, reference = self._fcv_artifacts(metadata, metadata_sha256)
+        self._last_fcv_root = root
+        self._last_fcv_reference = reference
+        return construct_splits(
+            metadata,
+            metadata_sha256,
+            fcv_split_manifest_root=root,
+            fcv_reference=reference,
+        )
+
     def _persist(
-        cls,
+        self,
         splits: dict[str, pd.DataFrame],
         output: str | Path,
         metadata: pd.DataFrame,
         metadata_sha256: str,
     ) -> dict[str, object]:
+        visible_root = Path(output)
+        protected_root = (
+            visible_root.parent / "analysis_only" / "splits"
+            if visible_root.name == "splits"
+            else visible_root / "analysis_only" / "splits"
+        )
         return persist_splits(
             splits,
             output,
+            analysis_only_output_dir=protected_root,
             source_metadata=metadata,
             source_metadata_sha256=metadata_sha256,
-            source_release=cls.RELEASE,
+            source_release=self.RELEASE,
+            fcv_split_manifest_root=self._last_fcv_root,
+            fcv_reference=self._last_fcv_reference,
         )
 
     def test_split_ids_and_csv_hashes_ignore_input_row_order(self) -> None:
         metadata = self._metadata()
-        first = construct_splits(metadata, "a" * 64)
+        first = self._construct(metadata, "a" * 64)
         shuffled = metadata.sample(frac=1.0, random_state=99).reset_index(drop=True)
-        replay = construct_splits(shuffled, "a" * 64)
+        replay = self._construct(shuffled, "a" * 64)
         for name in first:
             self.assertEqual(
                 first[name]["img_id"].tolist(),
@@ -334,13 +449,18 @@ class SplitContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right:
             self._persist(first, left, metadata, "a" * 64)
             self._persist(replay, right, shuffled, "a" * 64)
-            for name in first:
+            for name in (
+                "candidate_train",
+                "biased_val",
+                "expert_train",
+                "expert_calibration",
+            ):
                 left_path = Path(left) / f"waterbirds100_{name}.csv"
                 right_path = Path(right) / f"waterbirds100_{name}.csv"
                 self.assertEqual(sha256_file(left_path), sha256_file(right_path))
 
     def test_nested_expert_split_partitions_candidate_train(self) -> None:
-        splits = construct_splits(self._metadata(), "b" * 64)
+        splits = self._construct(self._metadata(), "b" * 64)
         candidate = set(splits["candidate_train"]["img_id"])
         expert_train = set(splits["expert_train"]["img_id"])
         calibration = set(splits["expert_calibration"]["img_id"])
@@ -353,7 +473,7 @@ class SplitContractTests(unittest.TestCase):
 
     def test_all_official_train_rows_are_used_and_misalignment_is_fatal(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "f" * 64)
+        splits = self._construct(metadata, "f" * 64)
         expected = set(metadata.loc[metadata["split"] == 0, "img_id"].astype(int))
         observed = set(splits["candidate_train"]["img_id"].astype(int)) | set(
             splits["biased_val"]["img_id"].astype(int)
@@ -368,25 +488,26 @@ class SplitContractTests(unittest.TestCase):
         with self.assertRaisesRegex(
             PreflightError, "source training split is not completely correlated"
         ):
-            construct_splits(corrupted, "f" * 64)
+            self._construct(corrupted, "f" * 64)
 
         for missing_split in (1, 2):
             with self.subTest(missing_split=missing_split), self.assertRaisesRegex(
                 PreflightError, "must all be nonempty"
             ):
-                construct_splits(
+                self._construct(
                     metadata.loc[metadata["split"] != missing_split].copy(),
                     "f" * 64,
                 )
 
     def test_split_manifest_rejects_incomplete_source_membership(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "9" * 64)
+        splits = self._construct(metadata, "9" * 64)
         extra = metadata.iloc[[0]].copy()
         extra["img_id"] = int(metadata["img_id"].max()) + 1
+        extra["metadata_row_index"] = int(metadata["metadata_row_index"].max()) + 1
         expanded_source = pd.concat([metadata, extra], ignore_index=True)
         with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
-            PreflightError, "complete official membership"
+            PreflightError, "omit official training rows"
         ):
             self._persist(
                 splits,
@@ -397,20 +518,23 @@ class SplitContractTests(unittest.TestCase):
 
     def test_persisted_manifest_records_overlap_union_and_alignment_assertions(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "e" * 64)
+        splits = self._construct(metadata, "e" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             manifest = self._persist(splits, temporary, metadata, "e" * 64)
-        self.assertEqual(manifest["schema_version"], "anchorcal-splits-v3")
+        self.assertEqual(manifest["schema_version"], "anchorcal-splits-v4")
+        self.assertEqual(manifest["namespace"], "selector_visible")
         self.assertEqual(manifest["source_release"], self.RELEASE)
         self.assertEqual(manifest["source_metadata_sha256"], "e" * 64)
-        membership = manifest["official_membership"]
-        self.assertEqual(membership["train"]["rows"], 160)
-        self.assertEqual(membership["oracle_val"]["rows"], 12)
-        self.assertEqual(membership["test"]["rows"], 12)
-        self.assertTrue(membership["train"]["complete_membership_verified"])
-        self.assertTrue(membership["train"]["all_y_equal_place"])
-        for summary in membership.values():
-            self.assertRegex(summary["img_ids_sha256"], r"^[0-9a-f]{64}$")
+        membership = manifest["source_fcv_membership"]
+        self.assertEqual(membership["source_train_count"], 160)
+        self.assertEqual(membership["candidate_train"]["rows"], 128)
+        self.assertEqual(membership["biased_val"]["rows"], 32)
+        self.assertTrue(membership["reuse_frozen_membership"])
+        self.assertEqual(membership["development_split_seed"], 0)
+        self.assertRegex(
+            membership["candidate_train"]["metadata_indices_sha256"],
+            r"^[0-9a-f]{64}$",
+        )
         assertions = manifest["contract_assertions"]
         self.assertTrue(assertions["all_passed"])
         self.assertEqual(
@@ -425,11 +549,99 @@ class SplitContractTests(unittest.TestCase):
                 "candidate_train_count"
             ],
         )
-        self.assertTrue(assertions["waterbirds100_alignment"]["passed"])
+        self.assertTrue(
+            assertions["complete_official_train_alignment_audit"]["passed"]
+        )
+
+    def test_selector_visible_and_analysis_only_schemas_are_physically_separate(self) -> None:
+        metadata = self._metadata()
+        splits = self._construct(metadata, "7" * 64)
+        with tempfile.TemporaryDirectory() as temporary:
+            visible = Path(temporary) / "splits"
+            self._persist(splits, visible, metadata, "7" * 64)
+            protected = Path(temporary) / "analysis_only" / "splits"
+            for name in (
+                "candidate_train",
+                "biased_val",
+                "expert_train",
+                "expert_calibration",
+            ):
+                frame = pd.read_csv(visible / f"waterbirds100_{name}.csv")
+                self.assertEqual(tuple(frame.columns), VISIBLE_SPLIT_COLUMNS)
+                self.assertTrue({"place", "group", "group_name"}.isdisjoint(frame.columns))
+            self.assertFalse((visible / "waterbirds100_oracle_val.csv").exists())
+            self.assertFalse((visible / "waterbirds100_test.csv").exists())
+            protected_manifest = json.loads(
+                (protected / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                protected_manifest["schema_version"], ANALYSIS_ONLY_SPLIT_SCHEMA
+            )
+            self.assertEqual(protected_manifest["namespace"], "analysis_only")
+            for name in ("oracle_val", "test"):
+                frame = pd.read_csv(protected / f"waterbirds100_{name}.csv")
+                self.assertEqual(tuple(frame.columns), ANALYSIS_ONLY_SPLIT_COLUMNS)
+                np.testing.assert_array_equal(
+                    frame["group"].to_numpy(),
+                    frame["y"].to_numpy() * 2 + frame["place"].to_numpy(),
+                )
+
+    def test_fcv_artifact_hash_mismatch_fails_closed(self) -> None:
+        metadata = self._metadata()
+        root, reference = self._fcv_artifacts(metadata, "8" * 64)
+        (root / "split_indices.json").write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(PreflightError, "artifact hash mismatch"):
+            construct_splits(
+                metadata,
+                "8" * 64,
+                fcv_split_manifest_root=root,
+                fcv_reference=reference,
+            )
+
+    def test_analysis_only_loader_verifies_manifest_and_group_encoding(self) -> None:
+        metadata = self._metadata()
+        splits = self._construct(metadata, "5" * 64)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            visible = output / "splits"
+            self._persist(splits, visible, metadata, "5" * 64)
+            config = {
+                "paths": {"output_root": str(output)},
+                "data": {"protected_split_root": "analysis_only/splits"},
+            }
+            loaded = load_analysis_only_splits(config)
+            self.assertEqual(set(loaded), {"oracle_val", "test"})
+            oracle_path = (
+                output
+                / "analysis_only"
+                / "splits"
+                / "waterbirds100_oracle_val.csv"
+            )
+            corrupted = pd.read_csv(oracle_path)
+            corrupted.loc[0, "group"] = 3
+            corrupted.to_csv(oracle_path, index=False)
+            with self.assertRaisesRegex(PreflightError, "provenance mismatch"):
+                load_analysis_only_splits(config)
+
+    def test_top_level_membership_is_imported_not_regenerated(self) -> None:
+        metadata = self._metadata()
+        root, reference = self._fcv_artifacts(metadata, "6" * 64)
+        indices = json.loads((root / "split_indices.json").read_text(encoding="utf-8"))
+        expected_candidate = set(indices["candidate_train_metadata_indices"])
+        splits = construct_splits(
+            metadata,
+            "6" * 64,
+            fcv_split_manifest_root=root,
+            fcv_reference=reference,
+        )
+        self.assertEqual(
+            set(splits["candidate_train"]["metadata_index"].astype(int)),
+            expected_candidate,
+        )
 
     def test_persisted_splits_are_create_once_and_exact_replays_are_noops(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "c" * 64)
+        splits = self._construct(metadata, "c" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             first = self._persist(splits, root, metadata, "c" * 64)
@@ -450,7 +662,7 @@ class SplitContractTests(unittest.TestCase):
 
     def test_persisted_split_csv_tampering_fails_instead_of_overwriting(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "d" * 64)
+        splits = self._construct(metadata, "d" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._persist(splits, root, metadata, "d" * 64)
@@ -464,7 +676,7 @@ class SplitContractTests(unittest.TestCase):
 
     def test_persisted_split_manifest_tampering_fails_instead_of_overwriting(self) -> None:
         metadata = self._metadata()
-        splits = construct_splits(metadata, "e" * 64)
+        splits = self._construct(metadata, "e" * 64)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._persist(splits, root, metadata, "e" * 64)

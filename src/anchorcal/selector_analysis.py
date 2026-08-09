@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .anchor_artifacts import verify_anchor_artifacts
 from .candidate_provenance import (
     load_candidate_preflight_binding,
     require_candidate_run_manifest,
@@ -21,6 +20,7 @@ from .io import atomic_write_json, atomic_write_text, hash_object, sha256_file
 from .provenance import write_hashed_receipt
 from .paths import geometry_artifact_root
 from .selector_storage import SELECTOR_FILENAME, SelectorVisibleReader
+from .selector_anchor_verification import verify_selector_anchor_artifacts
 from .visible_checkpoint_verification import verify_visible_checkpoint_artifacts
 
 
@@ -101,7 +101,7 @@ def run_selector_stage(config: dict[str, Any]) -> dict[str, Any]:
         != config["resolved_config_sha256"]
     ):
         raise PreflightError("AnchorCal decision receipt is not bound to this config")
-    verify_anchor_artifacts(config, decision_receipt=anchor_receipts[0])
+    verify_selector_anchor_artifacts(config, anchor_receipts[0])
     preflight = load_candidate_preflight_binding(config)
     candidate_root = output / ("debug/candidates" if debug else "candidates")
     expected_grid = {

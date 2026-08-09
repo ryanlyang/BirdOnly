@@ -13,8 +13,13 @@ import numpy as np
 import pandas as pd
 
 from .anchor_artifacts import verify_anchor_artifacts
+from .analysis_only_splits import load_analysis_only_splits
 from .candidate_evaluation import evaluate_plain, evaluate_practical_criteria
 from .candidate_schema import CANDIDATE_SCALAR_METRICS, candidate_per_example_shapes
+from .candidate_provenance import (
+    CANDIDATE_RUN_MANIFEST_SCHEMA,
+    load_candidate_preflight_binding,
+)
 from .checkpoint_verification import verify_candidate_checkpoint_artifacts
 from .checkpoints import CheckpointManager
 from .datasets import CandidateTrainingDataset, EpochSampler
@@ -301,8 +306,9 @@ def train_candidate_run(
     model = CandidateViT(create_pretrained_vit(_model_weights(output))).to(device)
     candidate_train = _frame(output, "candidate_train")
     biased_val = _frame(output, "biased_val")
-    oracle_val = _frame(output, "oracle_val")
-    test = _frame(output, "test")
+    analysis_only = load_analysis_only_splits(config)
+    oracle_val = analysis_only["oracle_val"]
+    test = analysis_only["test"]
     selector_table = pd.read_csv(
         geometry_artifact_root(config) / "selector_eval_subset.csv"
     ).sort_values("img_id")
@@ -325,12 +331,20 @@ def train_candidate_run(
         raise PreflightError("production candidate config differs from preflight")
     if preflight_report.get("resolved_paths") != config["paths"]:
         raise PreflightError("resolved candidate paths differ from preflight")
+    selector_mask_receipt = load_candidate_preflight_binding(config)
+    if preflight_report.get("selector_mask_receipt") != {
+        "schema_version": selector_mask_receipt["schema_version"],
+        "sha256": selector_mask_receipt["_receipt_sha256"],
+    }:
+        raise PreflightError(
+            "preflight report does not bind the selector-safe mask receipt"
+        )
     # This manifest is the immutable *scientific* identity of a candidate
     # trajectory.  Scheduler-attempt identity deliberately lives in the
     # append-only submission_receipts/jobs records instead: a preempted run
     # must be resumable by a replacement Slurm job with a different job ID.
     run_manifest = {
-        "schema_version": "anchorcal-candidate-run-v3",
+        "schema_version": CANDIDATE_RUN_MANIFEST_SCHEMA,
         "run_id": run_id,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
@@ -340,6 +354,10 @@ def train_candidate_run(
         "resolved_config_sha256": config["resolved_config_sha256"],
         "preflight_report": str(preflight_path.resolve()),
         "preflight_report_sha256": sha256_file(preflight_path),
+        "selector_mask_receipt": selector_mask_receipt["_receipt_path"],
+        "selector_mask_receipt_sha256": selector_mask_receipt[
+            "_receipt_sha256"
+        ],
         "metadata_path": config["paths"]["metadata_path"],
         "metadata_sha256": preflight_report["metadata_sha256"],
         "mask_bank_sha256": preflight_report["mask_bank_sha256"],

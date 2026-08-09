@@ -10,24 +10,41 @@ import numpy as np
 import pandas as pd
 
 from .candidate_schema import CANDIDATE_SCALAR_METRICS, candidate_per_example_shapes
+from .candidate_provenance import (
+    CANDIDATE_RUN_MANIFEST_SCHEMA,
+    load_candidate_preflight_binding,
+    require_candidate_run_manifest,
+)
 from .branch_provenance import verify_branch_artifacts
 from .anchor_artifacts import verify_anchor_artifacts
+from .analysis_only_splits import load_analysis_only_splits
 from .checkpoint_verification import verify_candidate_checkpoint_artifacts
 from .decision import verify_decision_receipt
-from .errors import AuditFailure
+from .errors import AuditFailure, PreflightError
 from .io import sha256_file
 from .provenance import verify_hashed_receipt
 from .paths import geometry_artifact_root
 from .selector_storage import SELECTOR_FILENAME, SelectorVisibleReader
 from .storage import HIDDEN_FILENAME, verify_candidate_storage
-from .vlm_masks import VLM_PRODUCER, load_vlm_mask_bank
+from .storage_budget import STORAGE_PREFLIGHT_SCHEMA
+from .vlm_masks import (
+    VLM_PRODUCER,
+    load_analysis_only_mask_audit,
+    load_vlm_mask_bank,
+)
 
 
 REQUIRED_PREFLIGHT_BUNDLE_MEMBERS = frozenset(
     {
         "preflight/report.json",
         "preflight/resolved_config.yaml",
+        "preflight/storage_budget.json",
         "preflight/mask_manifest.json",
+        "preflight/selector_mask_receipt.json",
+        "preflight/mask_visual_audit/manifest.json",
+        "preflight/mask_visual_audit/contact_sheet_01.png",
+        "preflight/mask_visual_audit/contact_sheet_02.png",
+        "preflight/mask_visual_audit/contact_sheet_03.png",
         "preflight/pretrained_manifest.json",
         "preflight/preprocessing_manifest.json",
         "environment/environment.json",
@@ -37,8 +54,10 @@ REQUIRED_PREFLIGHT_BUNDLE_MEMBERS = frozenset(
         "splits/waterbirds100_biased_val.csv",
         "splits/waterbirds100_expert_train.csv",
         "splits/waterbirds100_expert_calibration.csv",
-        "splits/waterbirds100_oracle_val.csv",
-        "splits/waterbirds100_test.csv",
+        "analysis_only/splits/manifest.json",
+        "analysis_only/splits/waterbirds100_oracle_val.csv",
+        "analysis_only/splits/waterbirds100_test.csv",
+        "analysis_only/masks/waterbirds100_oracle_val_mask_audit.json",
         "preflight/geometry/expert_train_geometry.csv",
         "preflight/geometry/expert_calibration_geometry.csv",
         "preflight/geometry/biased_val_geometry.csv",
@@ -127,6 +146,36 @@ def verify_campaign_artifacts(config: dict[str, Any]) -> dict[str, Any]:
 
     preflight = _json(output / "preflight" / "report.json")
     _require(preflight.get("status") == "passed", "preflight did not pass")
+    storage_budget_path = output / "preflight" / "storage_budget.json"
+    storage_budget = _json(storage_budget_path)
+    storage_binding = preflight.get("storage_budget")
+    _require(
+        storage_budget.get("schema_version") == STORAGE_PREFLIGHT_SCHEMA
+        and storage_budget.get("status") == "passed"
+        and isinstance(storage_binding, dict)
+        and storage_binding.get("schema_version") == STORAGE_PREFLIGHT_SCHEMA
+        and storage_binding.get("status") == "passed"
+        and storage_binding.get("manifest_path")
+        == str(storage_budget_path.resolve())
+        and storage_binding.get("manifest_sha256")
+        == sha256_file(storage_budget_path)
+        and all(
+            storage_binding.get(key) == value
+            for key, value in storage_budget.items()
+        ),
+        "preflight storage-budget provenance is incompatible",
+    )
+    analysis_only_splits = load_analysis_only_splits(config)
+    _require(
+        set(analysis_only_splits) == {"oracle_val", "test"},
+        "analysis-only split namespace is incomplete",
+    )
+    protected_mask_audit = load_analysis_only_mask_audit(config)
+    _require(
+        protected_mask_audit.get("namespace") == "analysis_only"
+        and protected_mask_audit.get("selector_visible") is False,
+        "analysis-only mask audit is incompatible",
+    )
     vlm_bank = load_vlm_mask_bank(config)
     _require(
         preflight.get("mask_source") == VLM_PRODUCER
@@ -227,12 +276,24 @@ def verify_campaign_artifacts(config: dict[str, Any]) -> dict[str, Any]:
     # candidate-selection receipt has been verified above.
     from .hidden_storage import HiddenMetricsReader
 
+    selector_mask_receipt = load_candidate_preflight_binding(config)
+
     for run_id, run_dir in sorted(found.items()):
         learning_rate, weight_decay = expected_grid[run_id]
         storage_manifest = verify_candidate_storage(
             run_dir, expected_run_id=run_id
         )
         run_manifest = _json(run_dir / "run_manifest.json")
+        try:
+            require_candidate_run_manifest(
+                run_manifest,
+                config,
+                selector_mask_receipt,
+                expected_run_id=run_id,
+                expected_decision_sha256=sha256_file(anchor_receipt),
+            )
+        except PreflightError as error:
+            raise AuditFailure(str(error)) from error
         completion = _json(run_dir / "completion.json")
         checkpoint_verification = verify_candidate_checkpoint_artifacts(
             run_dir,
@@ -248,7 +309,7 @@ def verify_campaign_artifacts(config: dict[str, Any]) -> dict[str, Any]:
             required_hidden_selectors=("oracle",),
         )
         _require(
-            run_manifest.get("schema_version") == "anchorcal-candidate-run-v3"
+            run_manifest.get("schema_version") == CANDIDATE_RUN_MANIFEST_SCHEMA
             and run_manifest.get("run_id") == run_id
             and float(run_manifest.get("learning_rate", -1)) == learning_rate
             and float(run_manifest.get("weight_decay", -1)) == weight_decay

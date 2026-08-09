@@ -43,6 +43,10 @@ def evaluate_plain(
         config["paths"]["waterbirds_root"],
         preprocessing=preprocessing,
     )
+    if require_all_groups and "place" not in frame.columns:
+        raise ValueError(
+            "group-aware evaluation requires an analysis-only frame with place"
+        )
     workers = int(config["optimization"]["num_workers"])
     options: dict[str, Any] = {
         "batch_size": int(config["candidate_grid"]["batch_size"]),
@@ -72,11 +76,11 @@ def evaluate_plain(
             scores = model(batch["image"].to(device, non_blocking=True))
             ids.append(batch["img_id"].numpy())
             labels.append(batch["y"].numpy())
-            places.append(batch["place"].numpy())
+            if require_all_groups:
+                places.append(batch["place"].numpy())
             logits.append(scores.float().cpu().numpy())
     ids_array = np.concatenate(ids)
     label_array = np.concatenate(labels)
-    place_array = np.concatenate(places)
     score_array = np.concatenate(logits)
     predictions = score_array.argmax(axis=1)
     result = {
@@ -86,11 +90,13 @@ def evaluate_plain(
         "prediction": predictions,
         "correct": predictions == label_array,
         "loss": per_example_cross_entropy(score_array, label_array),
-        "metrics": classification_metrics(
-            score_array, label_array, place_array if require_all_groups else None
-        ),
+        "metrics": classification_metrics(score_array, label_array),
     }
     if require_all_groups:
+        place_array = np.concatenate(places)
+        result["metrics"] = classification_metrics(
+            score_array, label_array, place_array
+        )
         result["groups"] = label_array * 2 + place_array
         result["places"] = place_array
     return result

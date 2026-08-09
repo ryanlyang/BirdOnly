@@ -18,6 +18,7 @@ def discover_candidates(search_roots: list[str | Path]) -> dict[str, list[str]]:
     releases: set[str] = set()
     metadata: set[str] = set()
     vlm_masks: set[str] = set()
+    fcv_split_manifests: set[str] = set()
     for root_value in search_roots:
         root = Path(root_value).expanduser()
         if not root.exists():
@@ -32,8 +33,21 @@ def discover_candidates(search_roots: list[str | Path]) -> dict[str, list[str]]:
             candidate = results_root / "val" / "prediction_cmap"
             if candidate.is_dir():
                 vlm_masks.add(str(candidate.resolve()))
+        for candidate in root.rglob("fcv_vit_waterbirds100_first_study"):
+            split_root = candidate / "split_manifests"
+            required = (
+                "manifest_bundle.json",
+                "split_indices.json",
+                "metadata_train.csv",
+                "metadata_val.csv",
+            )
+            if split_root.is_dir() and all(
+                (split_root / name).is_file() for name in required
+            ):
+                fcv_split_manifests.add(str(split_root.resolve()))
     return {
         "waterbirds_root": sorted(releases),
         "metadata_path": sorted(metadata),
         "vlm_mask_root": sorted(vlm_masks),
+        "fcv_split_manifest_root": sorted(fcv_split_manifests),
     }

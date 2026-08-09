@@ -12,6 +12,7 @@ import pandas as pd
 from scipy.stats import kendalltau, pearsonr, spearmanr
 
 from .checkpoint_verification import verify_candidate_checkpoint_artifacts
+from .analysis_only_splits import load_analysis_only_splits
 from .candidate_provenance import (
     load_candidate_preflight_binding,
     require_candidate_run_manifest,
@@ -24,6 +25,7 @@ from .metrics import classification_metrics
 from .provenance import verify_hashed_receipt
 from .seeds import stable_seed
 from .storage import verify_candidate_storage
+from .vlm_masks import load_analysis_only_mask_audit, load_vlm_mask_bank
 
 
 PRIMARY_CRITERIA = (
@@ -249,12 +251,9 @@ def run_hidden_stage(
         raise PreflightError(
             "candidate selection receipt does not bind the exact checkpoint grid"
         )
-    expected_splits = {
-        split: pd.read_csv(output / "splits" / f"waterbirds100_{split}.csv")
-        .sort_values("img_id", kind="stable")
-        .reset_index(drop=True)
-        for split in ("oracle_val", "test")
-    }
+    load_vlm_mask_bank(config)
+    load_analysis_only_mask_audit(config)
+    expected_splits = load_analysis_only_splits(config)
     reference_metadata = {
         split: {
             "img_id": frame["img_id"].to_numpy(dtype=np.int64),

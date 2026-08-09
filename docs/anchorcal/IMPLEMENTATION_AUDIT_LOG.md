@@ -22,22 +22,49 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   `/home/ryreu/guided_cnn/Food101/LearningToLook/code/WeCLIPPlus/results_waterbirds100_openclip_laion_dinovit/val/prediction_cmap`.
 - The corrected contract requires a producer-first join from the complete
   metadata `img_filename`, strict Pascal/VOC class-1 decoding, complete
-  one-to-one coverage for official splits 0 and 1 only, no official split-2
-  mask requirement, and an immutable `preflight/mask_manifest.json` with schema
-  `anchorcal-vlm-mask-manifest-v2` and a deterministic content hash. The mask
+  one-to-one public/runtime coverage for official split 0, no official split-2
+  mask requirement, and an immutable split-0-only
+  `preflight/mask_manifest.json` with schema
+  `anchorcal-vlm-mask-manifest-v3` and a deterministic content hash. The mask
   source identifier is
   `waterbirds100_openclip_laion_dinovit_weclipplus_prediction_cmap`.
-- The incompatible provenance correction bumps the package to `0.4.0`, the
-  resolved config to `anchorcal-config-v2`, and the split manifest to
-  `anchorcal-splits-v3`; this prevents stale Waterbirds-95 artifacts from
-  satisfying the corrected Waterbirds-100 contracts.
+  Public mask entries omit `metadata_index` and all context/group fields.
+- The latest incompatible split/privacy/visual-audit correction bumps the
+  package to `0.5.0`, the resolved config to `anchorcal-config-v3`, the
+  selector-safe split manifest to `anchorcal-splits-v4`, the protected split
+  manifest to `anchorcal-analysis-only-splits-v1`, and the mask manifest to
+  `anchorcal-vlm-mask-manifest-v3`. Older campaign artifacts cannot satisfy the
+  current contracts.
+- The development split now imports and hash-verifies the exact Waterbirds100
+  FCV seed-0 membership from the established `split_manifests` bundle; it never
+  regenerates a seed-1729 split. Selector-safe development/expert CSVs omit
+  metadata index, context, and group fields. The public split manifest exposes
+  no protected rows, IDs, counts, paths, or hashes. Protected oracle/test
+  records live only under `analysis_only/splits/`.
+- The user-audited VLM bank now also produces the deterministic 18-sample,
+  three-page `anchorcal-mask-visual-audit-v1` artifact under
+  `preflight/mask_visual_audit/`. All examples come from split 0: three
+  deterministic representatives from every low/middle/high area stratum in
+  each of its two aligned class/context cells. It never serializes `place` or
+  exposes split-1 membership. Its machine integrity is mandatory, while
+  `human_approval_required=false` avoids a blocking manual launch gate.
 - Replaced both CUB path keys with one locked `vlm_mask_root`; added the exact
   producer, mapping, decoder, VOC class, nearest-interpolation, split-coverage,
   and manifest-only-runtime configuration locks.
-- Added `src/anchorcal/vlm_masks.py`; rewrote preflight to audit all images,
-  require and decode only producer-contract splits 0 and 1, inventory rather
-  than require split 2, freeze the manifest before geometry construction, and
-  bind file, decoded-mask, mapping, and decoder hashes.
+- Added `src/anchorcal/vlm_masks.py`; rewrote preflight to require and decode
+  the public/runtime split-0 bank, inventory rather than require split 2,
+  freeze the public manifest before geometry construction, and bind file,
+  decoded-mask, mapping, and decoder hashes. A split-1 per-row machine audit is
+  isolated at
+  `analysis_only/masks/waterbirds100_oracle_val_mask_audit.json` under schema
+  `anchorcal-analysis-only-vlm-mask-audit-v1`.
+- Added `preflight/selector_mask_receipt.json` under schema
+  `anchorcal-selector-mask-receipt-v1`. Final selector provenance reads only
+  this compact hash/aggregate-identity receipt; it cannot parse the public
+  per-row manifest, import the full loader, or access the protected split-1
+  audit. `preflight/report.json` contains no protected audit path or hash; the
+  protected file self-binds and hidden/campaign verification enforces its fixed
+  location.
 - Replaced every branch, geometry, anchor, and practical-candidate CUB lookup
   with canonical `img_id` plus `img_filename` access through the frozen VLM
   manifest. Candidate ERM training and oracle/test classification remain
@@ -45,18 +72,24 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
 - Bumped incompatible branch and candidate provenance schemas, and bound the
   VLM root, source, contract, bank hash, and manifest hash through restart,
   branch, anchor, candidate, decision, and final-campaign verification.
-- On 2026-08-09, after the dataset, launcher, split, schema, and provenance
-  corrections, the corrected suite passed **171 AnchorCal tests** and all
-  **81 retained SETV tests** (**252 total**). This is the current local
-  code/launcher verification evidence for the Waterbirds-100 contract.
+- On 2026-08-09, the preceding `0.4.0` correction passed **171 AnchorCal tests**
+  and all **81 retained SETV tests** (**252 total**). That is historical evidence
+  and does not by itself validate the later `0.5.0` split/privacy/visual-audit
+  changes; their final regression evidence must be recorded after reconciliation.
+- On 2026-08-09, the completed `0.5.0` reconciliation passed **194 AnchorCal
+  tests** and all **81 retained SETV tests** (**275 total**), Python compilation,
+  every AnchorCal shell/Slurm syntax check, and `git diff --check`. The final
+  selector hardening deliberately injected an unexpected `place` dataset, root
+  dataset, root attribute, and anchor-manifest file; each was rejected by the
+  exact public allowlists.
 - Real Waterbirds/VLM coverage, the pinned model cache, and GH200 execution
   remain production preflight and smoke gates on TIGRIS; local fixtures do not
   claim that external runtime evidence.
 
 ## Phase 0: specification and repository audit
 
-- Read both binding specifications in full. The 112 answered locks, especially
-  residual locks 97-112, take precedence over earlier plan wording.
+- Read both binding specifications in full. All 114 answered locks, especially
+  residual locks 97-114, take precedence over earlier plan wording.
 - Inspected the existing repository, dependency metadata, historical `setv`
   package, TIGRIS handoff, and established `/home/ryreu/guided_cnn/BirdOnly`
   checkout convention.
@@ -78,7 +111,7 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   `anchorcal_mapping_manifest.json`. That historical contract is superseded:
   the corrected implementation must instead freeze the producer-derived VLM
   join and per-file hashes in `preflight/mask_manifest.json` using schema
-  `anchorcal-vlm-mask-manifest-v2`.
+  `anchorcal-vlm-mask-manifest-v3`.
 - Review also strengthened production preflight to validate fixed TIGRIS repo,
   cache and output roots, the exact interpreter, aarch64, and GH200.
 - Verification: configuration/split/mask tests plus generated-fixture
@@ -178,6 +211,10 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
 
 ## Phase 8: candidate grid, storage, selection, and hidden reporting
 
+- The current campaign adds a fail-closed `anchorcal-storage-preflight-v1`
+  contract: a 40 GiB hard budget, 35 GiB launch guard, 16 GiB minimum free
+  space, 6 GiB concurrent-growth allowance, and explicit conservative
+  components totaling 12 GiB. The receipt is bound before downstream writes.
 - Implemented all six 40-epoch ordinary ViT runs, one shared epoch-zero
   diagnostic, every-epoch practical/oracle/test evaluation, fixed selectors
   and donors, rolling deduplicated checkpoints, final/restart states, atomic
@@ -195,6 +232,11 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   exact run/epoch/sample completeness, and rolling-state agreement before the
   candidate-selection receipt. Hidden analysis validates the receipt and file
   hashes before reading oracle/test data.
+- Selector-visible HDF5 readers now require the exact reviewed root, attribute,
+  sample, epoch, prediction, metric, and per-example schemas. Selector-side
+  anchor verification independently requires the exact 13-file public artifact
+  set at its fixed paths; a future producer cannot add another selector-readable
+  file without a schema/code review.
 - Verification: `test_storage.py`, `test_storage_namespace_boundary.py`,
   `test_checkpoints.py`, and the full synthetic selector-freeze/hidden-join
   test in `test_analysis_integration.py`.

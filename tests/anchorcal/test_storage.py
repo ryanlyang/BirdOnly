@@ -251,6 +251,60 @@ class CandidateStorageTests(unittest.TestCase):
             self.assertEqual(reader.completed_slots, (0,))
             self.assertEqual(reader.read_epoch(0)["epoch_number"], 0)
 
+    def test_selector_reader_rejects_non_allowlisted_sample_dataset(self) -> None:
+        run_dir = Path(self.temporary.name) / "sample_contamination"
+        with CandidateStorage(
+            run_dir,
+            run_id="sample_contamination",
+            epoch_capacity=1,
+            num_classes=2,
+            selector_metadata=self.selector_metadata,
+            hidden_metadata=self.hidden_metadata,
+            selector_metric_names=("ordinary_accuracy", "saliency_harmonic"),
+        ) as writer:
+            self._write(writer, 0, 0)
+            writer.finalize()
+        selector_path = run_dir / SELECTOR_FILENAME
+        with h5py.File(selector_path, "r+") as selector:
+            selector["samples"].create_dataset(
+                "place", data=np.zeros(len(self.selector_metadata.img_ids), dtype=np.int64)
+            )
+        with self.assertRaisesRegex(StorageError, "sample datasets.*allowlisted"):
+            SelectorVisibleReader(selector_path)
+
+    def test_selector_reader_rejects_non_allowlisted_root_dataset_or_attribute(self) -> None:
+        for suffix, contaminate in (
+            (
+                "root_dataset_contamination",
+                lambda h5: h5.create_dataset("unexpected", data=np.asarray([1])),
+            ),
+            (
+                "root_attribute_contamination",
+                lambda h5: h5.attrs.__setitem__("unexpected", "value"),
+            ),
+        ):
+            with self.subTest(suffix=suffix):
+                run_dir = Path(self.temporary.name) / suffix
+                with CandidateStorage(
+                    run_dir,
+                    run_id=suffix,
+                    epoch_capacity=1,
+                    num_classes=2,
+                    selector_metadata=self.selector_metadata,
+                    hidden_metadata=self.hidden_metadata,
+                    selector_metric_names=(
+                        "ordinary_accuracy",
+                        "saliency_harmonic",
+                    ),
+                ) as writer:
+                    self._write(writer, 0, 0)
+                    writer.finalize()
+                selector_path = run_dir / SELECTOR_FILENAME
+                with h5py.File(selector_path, "r+") as selector:
+                    contaminate(selector)
+                with self.assertRaisesRegex(StorageError, "allowlisted"):
+                    SelectorVisibleReader(selector_path)
+
     def test_recovers_publication_interrupted_between_pair_renames(self) -> None:
         writer = self._writer(capacity=1)
         self._write(writer, 0, 0)

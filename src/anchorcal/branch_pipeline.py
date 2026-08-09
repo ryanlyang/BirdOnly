@@ -423,7 +423,6 @@ def evaluate_branch(
     model.eval()
     ids: list[np.ndarray] = []
     labels: list[np.ndarray] = []
-    places: list[np.ndarray] = []
     logits_list: list[np.ndarray] = []
     valid_list: list[np.ndarray] = []
     source_metadata_list: list[np.ndarray] = []
@@ -478,7 +477,6 @@ def evaluate_branch(
                     )
             ids.append(ids_array)
             labels.append(batch["y"].numpy())
-            places.append(batch["place"].numpy())
             logits_list.append(logits)
             valid_list.append(valid)
             source_metadata_list.append(source_metadata)
@@ -487,7 +485,6 @@ def evaluate_branch(
         "sample_id": np.concatenate(ids),
         "labels": np.concatenate(labels),
         "label": np.concatenate(labels),
-        "places": np.concatenate(places),
         "logits": np.concatenate(logits_list),
         "valid": np.concatenate(valid_list),
         "source_patch_metadata": np.concatenate(source_metadata_list),

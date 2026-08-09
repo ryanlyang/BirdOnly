@@ -13,6 +13,7 @@ from anchorcal.runtime import REQUIRED_PACKAGES, write_package_lock
 REPOSITORY = Path(__file__).resolve().parents[2]
 LAUNCHER = REPOSITORY / "scripts" / "anchorcal" / "submit_campaign.sh"
 RUNTIME_COMMON = REPOSITORY / "slurm" / "anchorcal" / "runtime_common.sh"
+PREFLIGHT_JOB = REPOSITORY / "slurm" / "anchorcal" / "preflight.sbatch"
 
 
 def _failure_function_source() -> str:
@@ -58,6 +59,27 @@ class PackageLockTests(unittest.TestCase):
 
 
 class LauncherContractTests(unittest.TestCase):
+    def test_frozen_fcv_membership_root_is_a_required_exact_tigris_path(self) -> None:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        preflight = (REPOSITORY / "src" / "anchorcal" / "preflight.py").read_text(
+            encoding="utf-8"
+        )
+        expected = (
+            "/home/ryreu/guided_cnn/logsWaterbird/"
+            "fcv_vit_waterbirds100_first_study/split_manifests"
+        )
+        self.assertIn('"fcv_split_manifest_root"', launcher)
+        self.assertIn(expected, launcher)
+        self.assertIn('"fcv_split_manifest_root"', preflight)
+        self.assertIn("fcv_vit_waterbirds100_first_study/split_manifests", preflight)
+        for filename in (
+            "manifest_bundle.json",
+            "split_indices.json",
+            "metadata_train.csv",
+            "metadata_val.csv",
+        ):
+            self.assertIn(filename, launcher)
+
     def test_launcher_and_jobs_share_fast_required_package_lock(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
         runtime = RUNTIME_COMMON.read_text(encoding="utf-8")
@@ -65,6 +87,14 @@ class LauncherContractTests(unittest.TestCase):
         self.assertNotIn("metadata.distributions", runtime)
         self.assertIn("from anchorcal.runtime import write_package_lock", launcher)
         self.assertIn("from anchorcal.runtime import write_package_lock", runtime)
+
+    def test_preflight_checksum_binds_public_receipt_and_protected_mask_audit(self) -> None:
+        source = PREFLIGHT_JOB.read_text(encoding="utf-8")
+        self.assertIn("preflight/selector_mask_receipt.json", source)
+        self.assertIn(
+            "analysis_only/masks/waterbirds100_oracle_val_mask_audit.json",
+            source,
+        )
 
     def test_interrupt_traps_are_installed_before_frozen_input_work(self) -> None:
         source = LAUNCHER.read_text(encoding="utf-8")

@@ -19,6 +19,56 @@ from .errors import StorageError
 SELECTOR_FILENAME = "candidate_outputs.h5"
 SELECTOR_SCHEMA_VERSION = "anchorcal-candidate-visible-v1"
 
+_ROOT_KEYS = frozenset({"epochs", "samples", "predictions", "metrics"})
+_ROOT_ATTRS = frozenset(
+    {
+        "schema_version",
+        "namespace",
+        "split",
+        "run_id",
+        "epoch_capacity",
+        "num_classes",
+        "metadata_sha256",
+    }
+)
+_EPOCH_KEYS = frozenset({"number", "complete", "committed_unix_ns"})
+_SAMPLE_KEYS = frozenset({"img_id", "label"})
+_PREDICTION_KEYS = frozenset({"logits", "prediction", "correct", "loss"})
+_SUBSET_KEYS = frozenset({"samples", "per_example"})
+
+
+def _require_exact_keys(container: Any, expected: frozenset[str], name: str) -> None:
+    actual = set(container.keys())
+    if actual != expected:
+        raise StorageError(
+            f"selector-visible HDF5 {name} is not exactly allowlisted: "
+            f"expected={sorted(expected)}, actual={sorted(actual)}"
+        )
+
+
+def _validate_visible_layout(h5: Any) -> None:
+    """Reject every non-schema field before exposing any selector data."""
+
+    root_keys = set(_ROOT_KEYS)
+    if "selector_subset" in h5:
+        root_keys.add("selector_subset")
+    _require_exact_keys(h5, frozenset(root_keys), "root datasets")
+    if set(h5.attrs.keys()) != _ROOT_ATTRS:
+        raise StorageError("selector-visible HDF5 root attributes are not allowlisted")
+    _require_exact_keys(h5["epochs"], _EPOCH_KEYS, "epoch datasets")
+    _require_exact_keys(h5["samples"], _SAMPLE_KEYS, "sample datasets")
+    _require_exact_keys(h5["predictions"], _PREDICTION_KEYS, "prediction datasets")
+    if "selector_subset" in h5:
+        subset = h5["selector_subset"]
+        _require_exact_keys(subset, _SUBSET_KEYS, "selector-subset groups")
+        if set(subset.attrs.keys()) != {"metadata_sha256"}:
+            raise StorageError(
+                "selector-visible HDF5 selector-subset attributes are not allowlisted"
+            )
+        _require_exact_keys(
+            subset["samples"], _SAMPLE_KEYS, "selector-subset sample datasets"
+        )
+
 
 def _require_h5py():
     try:
@@ -49,15 +99,14 @@ class SelectorVisibleReader:
                 raise StorageError("not an AnchorCal selector-visible HDF5 file")
             if self._h5.attrs.get("namespace") != "selector_visible":
                 raise StorageError("candidate HDF5 namespace is not selector-visible")
+            if self._h5.attrs.get("split") != "biased_val":
+                raise StorageError("selector-visible HDF5 split is not biased_val")
             if (
                 expected_run_id is not None
                 and self._h5.attrs.get("run_id") != expected_run_id
             ):
                 raise StorageError("selector-visible HDF5 run ID mismatch")
-            if "group" in self._h5["samples"]:
-                raise StorageError(
-                    "selector-visible HDF5 contains protected group labels"
-                )
+            _validate_visible_layout(self._h5)
         except BaseException:
             self._h5.close()
             raise
