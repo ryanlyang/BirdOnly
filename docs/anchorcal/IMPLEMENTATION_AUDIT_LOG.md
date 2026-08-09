@@ -121,6 +121,25 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   recomputation and saved-validity-vector tamper regressions. Python
   compilation, every AnchorCal shell/Slurm syntax check, and
   `git diff --check` also passed.
+- On 2026-08-09, campaign `20260809T181257Z_3970389` at commit `f4ab402`
+  passed preflight job `70512`, including the new combined budget decision,
+  and debug job `70513` verified the full preflight bundle before reaching the
+  foreground invariance audit. That audit then exposed one GH200
+  serialization-boundary bug: the locked evaluation autocast correctly
+  produced BF16 logits and patch activations, but four floating-tensor exports
+  called NumPy without first converting to a supported dtype. This was not an
+  invariance failure and did not change a model forward, mask, split, token
+  budget, score, or audit threshold.
+- AnchorCal `0.6.1` fixes that boundary through one tested helper that detaches
+  autocast floating outputs and converts them to FP32 before CPU/NumPy export;
+  integer source indices retain their dtype. The locked BF16 forward and
+  `anchorcal-config-v4` scientific contract are unchanged. Because queued jobs
+  are frozen to a commit and package lock, the `f4ab402` campaign cannot be
+  resumed under the repair and must be archived before a fresh full launch.
+- The completed `0.6.1` repair passed **208 AnchorCal tests** and all **81
+  retained SETV tests** (**289 total**), including a direct BF16-to-NumPy
+  regression. Python compilation, every AnchorCal shell/Slurm syntax check,
+  and `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

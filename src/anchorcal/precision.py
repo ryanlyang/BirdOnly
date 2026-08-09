@@ -24,6 +24,12 @@ def evaluation_autocast(device):
     )
 
 
+def floating_tensor_to_numpy(value):
+    """Export an autocast floating tensor through NumPy-compatible fp32."""
+
+    return value.detach().float().cpu().numpy()
+
+
 @contextmanager
 def evaluation_inference(device) -> Iterator[None]:
     """Run a non-saliency evaluation forward without autograd state."""

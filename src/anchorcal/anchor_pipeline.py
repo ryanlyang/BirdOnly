@@ -48,7 +48,11 @@ from .models.branches import BackgroundBranch, ForegroundBranch, assert_independ
 from .pretrained import create_pretrained_vit
 from .preprocessing import load_preprocessing_manifest
 from .paths import geometry_artifact_root
-from .precision import evaluation_inference, saliency_evaluation
+from .precision import (
+    evaluation_inference,
+    floating_tensor_to_numpy,
+    saliency_evaluation,
+)
 from .saliency import anchor_image_alignment, image_alignment
 from .seeds import seed_everything, stable_seed, stateless_rng
 from .statistics import (
@@ -238,12 +242,20 @@ def _foreground_invariance_audit(
                 second_output = model(second_image, mask_tensor)
             differences.append(
                 require_foreground_invariance(
-                    first_output.logits.cpu().numpy(),
-                    second_output.logits.cpu().numpy(),
-                    first_tokens=first_output.patch_activations.cpu().numpy(),
-                    second_tokens=second_output.patch_activations.cpu().numpy(),
-                    first_source=first_output.source_indices.cpu().numpy(),
-                    second_source=second_output.source_indices.cpu().numpy(),
+                    floating_tensor_to_numpy(first_output.logits),
+                    floating_tensor_to_numpy(second_output.logits),
+                    first_tokens=floating_tensor_to_numpy(
+                        first_output.patch_activations
+                    ),
+                    second_tokens=floating_tensor_to_numpy(
+                        second_output.patch_activations
+                    ),
+                    first_source=(
+                        first_output.source_indices.detach().cpu().numpy()
+                    ),
+                    second_source=(
+                        second_output.source_indices.detach().cpu().numpy()
+                    ),
                 )
             )
             if not torch.equal(first_output.patch_valid, second_output.patch_valid):

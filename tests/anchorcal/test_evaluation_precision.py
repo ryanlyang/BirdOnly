@@ -11,6 +11,7 @@ import torch
 from anchorcal.precision import (
     evaluation_autocast,
     evaluation_inference,
+    floating_tensor_to_numpy,
     saliency_evaluation,
 )
 
@@ -46,6 +47,12 @@ class EvaluationPrecisionPolicyTests(unittest.TestCase):
                 self.assertTrue(torch.is_grad_enabled())
                 result = value.square()
         self.assertEqual(float(torch.autograd.grad(result, value)[0]), 4.0)
+
+    def test_bfloat16_evaluation_outputs_cross_numpy_boundary_as_fp32(self) -> None:
+        value = torch.tensor([1.0, -2.0], dtype=torch.bfloat16)
+        exported = floating_tensor_to_numpy(value)
+        self.assertEqual(exported.dtype.name, "float32")
+        self.assertEqual(exported.tolist(), [1.0, -2.0])
 
 
 def _callee_root_and_name(node: ast.AST) -> tuple[str | None, str | None]:

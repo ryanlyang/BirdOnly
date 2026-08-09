@@ -7,7 +7,7 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.6.0` and resolved configuration
+The corrected campaign requires AnchorCal `0.6.1` and resolved configuration
 schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
