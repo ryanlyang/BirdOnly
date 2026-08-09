@@ -68,6 +68,12 @@ resolved configuration schema `anchorcal-config-v4`, VLM-mask manifest schema
 `anchorcal-vlm-mask-manifest-v3`, and split manifest schema
 `anchorcal-splits-v4`. Older schema artifacts cannot satisfy this campaign.
 
+The prospective repeated random-token amendment in answers 35 and 36 advances
+the active package to `0.7.0` and the resolved configuration to
+`anchorcal-config-v5`. It changes only that audit protocol; the dataset, VLM
+mask, split, candidate, and protected-analysis contracts in this correction
+remain binding and their artifact schemas are unchanged.
+
 The authoritative dataset is the dedicated Waterbirds-100 release:
 
 ```text
@@ -1172,7 +1178,12 @@ Any failure above tolerance blocks anchor construction until explained.
 
 **Decision**
 
-Class-balanced accuracy must satisfy both:
+The production hard gate uses ten fixed random-token realizations. For every
+recipient, first average its correctness across the ten realizations. Compute
+class-balanced accuracy and the class-stratified bootstrap interval from those
+per-image averages.
+
+The aggregate class-balanced accuracy must satisfy both:
 
 ```text
 point estimate <= 0.53
@@ -1186,7 +1197,22 @@ and:
 
 Use 2,000 class-stratified bootstrap replicates.
 
+The ten realizations are the base seed followed by nine purpose-derived fixed
+seeds. Persist every realization's result as well as the aggregate. An
+individual realization does not independently fail or pass the campaign; the
+hard gate applies to the aggregate only.
+
 If it fails, investigate implementation leakage or label-correlated random-pool construction before proceeding.
+
+**Prospective pilot amendment, 2026-08-09**
+
+The original single-realization gate produced `0.5280` with 95 percent CI
+`[0.5061, 0.5483]` in job `72587`. The preserved read-only job-`72947`
+diagnostic found no stable leakage: the ten-realization pooled mean was
+`0.5004` with aggregate CI `[0.4928, 0.5082]`, and the exactly balanced mode
+was `0.4985` with aggregate CI `[0.4915, 0.5051]`. Source/recipient image
+overlap was zero. This amendment replaces single-realization inference for
+new campaigns; it does not rewrite or override the historical failed receipt.
 
 ---
 
@@ -1200,12 +1226,17 @@ Construction:
 
 1. Source patches come from `expert_train`.
 2. Source images are disjoint from audit recipient images.
-3. Draw equal numbers of source patches from both source classes.
+3. For the selected even token budget K, draw exactly K/2 patches from each
+   source class separately for every recipient and every realization.
 4. Ignore recipient class when sampling.
 5. Use the same fixed token budget and no positions.
 6. Do not use synthetic noise.
 
 The goal is to preserve realistic patch statistics while destroying label information.
+
+Use ten fixed realizations and apply the hard gate described in answer 35 to
+their aggregate. For the selected K=32 pilot budget, every realization for
+every recipient therefore contains exactly 16/16 source-class patches.
 
 ---
 
@@ -3243,7 +3274,7 @@ the practical selection receipt is frozen.
 # Final Resolved Configuration Snapshot
 
 ```yaml
-schema_version: anchorcal-config-v4
+schema_version: anchorcal-config-v5
 
 data:
   release: waterbird_1.0_forest2water2
@@ -3337,6 +3368,12 @@ anchorcal:
   bootstrap_seed: 7002
   final_metric_bootstrap_replicates: 2000
   final_metric_bootstrap_seed: 7003
+  random_token_draw_mode: per_draw_class_balanced
+  random_token_repeats: 10
+  random_token_batch_size: 128
+  random_token_bootstrap_replicates: 2000
+  random_token_permutation_replicates: 2000
+  random_token_max_balanced_accuracy: 0.53
 
 candidate_grid:
   head: "Linear(384, 2)"

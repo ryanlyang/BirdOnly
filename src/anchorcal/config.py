@@ -21,7 +21,7 @@ REQUIRED_PATH_KEYS = (
 )
 
 LOCKED = {
-    ("schema_version",): "anchorcal-config-v4",
+    ("schema_version",): "anchorcal-config-v5",
     ("data", "release"): "waterbird_1.0_forest2water2",
     (
         "data",
@@ -142,6 +142,12 @@ LOCKED = {
     ("anchorcal", "anchor_score_tolerance"): 1.0e-10,
     ("anchorcal", "candidate_score_tolerance"): 1.0e-8,
     ("anchorcal", "final_metric_bootstrap_replicates"): 2000,
+    ("anchorcal", "random_token_draw_mode"): "per_draw_class_balanced",
+    ("anchorcal", "random_token_repeats"): 10,
+    ("anchorcal", "random_token_batch_size"): 128,
+    ("anchorcal", "random_token_bootstrap_replicates"): 2000,
+    ("anchorcal", "random_token_permutation_replicates"): 2000,
+    ("anchorcal", "random_token_max_balanced_accuracy"): 0.53,
     ("criteria", "selector_eval_per_class"): 256,
     ("criteria", "swap_donors"): 4,
     ("criteria", "blur_sigmas"): [2, 4, 8],

@@ -212,6 +212,29 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   original pooled draw, per-draw class-balance/uniqueness, summary, and invalid
   contract regressions. Python compilation, every AnchorCal shell/Slurm syntax
   check, and `git diff --check` also passed.
+- TIGRIS diagnostic job `72947` completed cleanly with zero source/recipient
+  image overlap. Across ten pooled realizations, mean balanced accuracy was
+  `0.5004`, the aggregate 95 percent interval was `[0.4928, 0.5082]`, and the
+  one-sided permutation p-value was `0.490`. Across ten exactly 16/16-balanced
+  realizations, the corresponding values were `0.4985`,
+  `[0.4915, 0.5051]`, and `0.678`. The original pooled seed was the maximum
+  pooled realization (`0.5280`), supporting a randomization-level fluctuation
+  rather than stable label leakage.
+- AnchorCal `0.7.0` and `anchorcal-config-v5` prospectively replace the
+  single-realization random-token gate. Each recipient now receives exactly
+  K/2 patches from each source class in each of ten fixed realizations, and the
+  existing `point <= 0.53` and chance-containing 95 percent interval gates are
+  applied to aggregate per-image correctness. Individual results, seeds,
+  source-image counts, and the zero-overlap assertion remain persisted. The
+  historical job-72587 failure and job-72947 diagnostic are not overwritten or
+  reclassified; a fresh campaign is required.
+- The completed `0.7.0` amendment passed **219 AnchorCal tests** and all **81
+  retained SETV tests** (**300 total**). Coverage includes exact 16/16 draw
+  balance and uniqueness, deterministic seed replay, aggregate-vs-individual
+  gate scope, aggregate point/CI failures, non-finite fail-closed behavior,
+  locked configuration, package/schema agreement, and the existing campaign
+  boundaries. Python compilation, every AnchorCal shell/Slurm syntax check,
+  and `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

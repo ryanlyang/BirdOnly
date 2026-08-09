@@ -7,8 +7,8 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.6.4` and resolved configuration
-schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
+The corrected campaign requires AnchorCal `0.7.0` and resolved configuration
+schema `anchorcal-config-v5`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
 single preflight job is allowed to populate the pinned Hugging Face model
@@ -399,6 +399,13 @@ original gate outcome for each realization, aggregate bootstrap behavior,
 per-class prediction rates, a recipient-label permutation test, provenance,
 and source/recipient disjointness. It is explicitly diagnostic-only and cannot
 silently override the original gate.
+
+The preserved job-72947 result motivated the prospective `0.7.0` pilot
+amendment: production now uses the exactly 16/16 construction for each of ten
+fixed realizations and applies the existing point/CI hard requirements to the
+aggregate per-image correctness. The diagnostic never changed job 72587's
+failed status. A new `0.7.0` campaign is required; do not reuse or mutate that
+campaign's frozen inputs or receipts.
 
 ## 7. Final verification and collection
 

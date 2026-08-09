@@ -1,4 +1,4 @@
-"""Read-only repeated-randomization diagnostics for the background branch."""
+"""Repeated-randomization construction and audits for the background branch."""
 
 from __future__ import annotations
 
@@ -7,11 +7,59 @@ from typing import Any
 import numpy as np
 
 from .audits import stratified_bootstrap_interval
+from .errors import AuditFailure
 from .metrics import class_balanced_mean
 from .seeds import stable_seed, stateless_rng
 
 
 DIAGNOSTIC_MODES = ("pooled", "per_draw_class_balanced")
+
+
+def require_repeated_random_token_collapse(
+    summary: dict[str, Any],
+    *,
+    maximum_balanced_accuracy: float = 0.53,
+    chance_accuracy: float = 0.50,
+) -> dict[str, Any]:
+    """Apply the hard gate to the aggregate repeated-randomization result.
+
+    A single random token assignment has a nonzero false-rejection rate.  The
+    production protocol therefore applies the prespecified point and bootstrap
+    requirements to per-image correctness averaged across fixed randomizations.
+    Individual-repeat results remain in ``summary`` for auditability.
+    """
+
+    aggregate = summary.get("aggregate_per_image_bootstrap_95")
+    if not isinstance(aggregate, dict):
+        raise ValueError("random-token summary is missing the aggregate interval")
+    point = float(aggregate["point"])
+    lower = float(aggregate["lower"])
+    upper = float(aggregate["upper"])
+    values = np.asarray([point, lower, upper], dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise AuditFailure("random-token aggregate contains non-finite values")
+    passed = bool(
+        point <= maximum_balanced_accuracy
+        and lower <= chance_accuracy <= upper
+    )
+    gate = {
+        "status": "passed" if passed else "failed",
+        "scope": "aggregate_per_image_correctness_across_fixed_repeats",
+        "maximum_balanced_accuracy": float(maximum_balanced_accuracy),
+        "chance_accuracy": float(chance_accuracy),
+        "requirements": [
+            "aggregate_point_estimate_lte_maximum",
+            "aggregate_bootstrap_95_contains_chance",
+        ],
+    }
+    if not passed:
+        raise AuditFailure(
+            "repeated random-token leakage gate failed: "
+            f"aggregate balanced accuracy={point:.4f}, "
+            f"95% CI=[{lower:.4f},{upper:.4f}], "
+            f"maximum={maximum_balanced_accuracy:.4f}"
+        )
+    return {**summary, "hard_gate": gate}
 
 
 def diagnostic_seeds(base_seed: int, repeats: int) -> list[int]:

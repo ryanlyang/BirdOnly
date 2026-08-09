@@ -21,7 +21,6 @@ from .audits import (
     assert_background_patch_purity,
     fit_geometry_auditors,
     require_foreground_invariance,
-    require_random_token_collapse,
     stratified_bootstrap_interval,
 )
 from .background import load_token_budget_manifest, load_view_bank
@@ -52,6 +51,12 @@ from .precision import (
     evaluation_inference,
     floating_tensor_to_numpy,
     saliency_evaluation,
+)
+from .random_token_diagnostic import (
+    diagnostic_seeds,
+    random_token_draw_indices,
+    require_repeated_random_token_collapse,
+    summarize_random_token_predictions,
 )
 from .saliency import anchor_image_alignment, image_alignment
 from .seeds import seed_everything, stable_seed, stateless_rng
@@ -583,6 +588,7 @@ def _random_token_audit(
         preprocessing=preprocessing,
     )
     pools: dict[int, list[torch.Tensor]] = {0: [], 1: []}
+    source_image_ids: dict[int, set[int]] = {0: set(), 1: set()}
     maximum_per_class = 12000
     with evaluation_inference(device):
         for index in range(len(expert_dataset)):
@@ -597,6 +603,7 @@ def _random_token_audit(
             indices = sample["background_indices"].to(device)
             if len(indices):
                 pools[label].append(projected[indices].cpu())
+                source_image_ids[label].add(int(sample["img_id"]))
     count = min(sum(item.shape[0] for item in pools[0]), sum(item.shape[0] for item in pools[1]), maximum_per_class)
     if count < background.token_budget:
         raise AuditFailure("random-token audit has too few class-balanced source patches")
@@ -605,30 +612,77 @@ def _random_token_audit(
     ).to(device)
     table = pd.read_csv(geometry_artifact_root(config) / "biased_val_geometry.csv")
     valid = table["safe_background_count"] >= background.token_budget
-    labels = table.loc[valid, "y"].to_numpy(dtype=np.int64)
-    predictions = []
-    with evaluation_inference(device):
-        for row in table.loc[valid].itertuples(index=False):
-            rng = stateless_rng(
-                int(config["seeds"]["random_token_audit"]),
-                int(row.img_id),
-                "random_token_audit",
-            )
-            indices = rng.choice(len(balanced_pool), background.token_budget, replace=False)
-            tokens = balanced_pool[torch.from_numpy(indices).to(device)].unsqueeze(0)
-            token_valid = torch.ones(
-                (1, background.token_budget), dtype=torch.bool, device=device
-            )
-            logits, _ = background.encoder.forward_tokens(tokens, token_valid)
-            predictions.append(int(logits.argmax(dim=1).item()))
-    correct = np.asarray(predictions) == labels
-    interval = require_random_token_collapse(
-        correct,
-        labels,
-        seed=int(config["seeds"]["random_token_audit"]),
-        replicates=2000,
+    recipients = table.loc[valid]
+    img_ids = recipients["img_id"].to_numpy(dtype=np.int64)
+    labels = recipients["y"].to_numpy(dtype=np.int64)
+    overlap = set(map(int, img_ids)) & (
+        source_image_ids[0] | source_image_ids[1]
     )
-    return {**interval.__dict__, "recipient_count": int(len(labels)), "source_patches_per_class": int(count)}
+    if overlap:
+        raise AuditFailure(
+            f"random-token source/recipient image overlap: {len(overlap)} images"
+        )
+    repeats = int(config["anchorcal"]["random_token_repeats"])
+    batch_size = int(config["anchorcal"]["random_token_batch_size"])
+    mode = str(config["anchorcal"]["random_token_draw_mode"])
+    seeds = diagnostic_seeds(
+        int(config["seeds"]["random_token_audit"]), repeats
+    )
+    prediction_rows: list[np.ndarray] = []
+    with evaluation_inference(device):
+        for seed in seeds:
+            draw_indices = random_token_draw_indices(
+                img_ids,
+                patches_per_class=count,
+                token_budget=background.token_budget,
+                seed=seed,
+                mode=mode,
+            )
+            repeat_predictions: list[np.ndarray] = []
+            for start in range(0, len(img_ids), batch_size):
+                indices = torch.from_numpy(
+                    draw_indices[start : start + batch_size]
+                ).to(device)
+                tokens = balanced_pool[indices]
+                token_valid = torch.ones(
+                    tokens.shape[:2], dtype=torch.bool, device=device
+                )
+                logits, _ = background.encoder.forward_tokens(tokens, token_valid)
+                repeat_predictions.append(logits.argmax(dim=1).cpu().numpy())
+            prediction_rows.append(np.concatenate(repeat_predictions))
+    summary = summarize_random_token_predictions(
+        np.stack(prediction_rows),
+        labels,
+        seeds,
+        bootstrap_replicates=int(
+            config["anchorcal"]["random_token_bootstrap_replicates"]
+        ),
+        permutation_replicates=int(
+            config["anchorcal"]["random_token_permutation_replicates"]
+        ),
+        summary_seed=int(config["seeds"]["random_token_audit"]),
+    )
+    result = require_repeated_random_token_collapse(
+        summary,
+        maximum_balanced_accuracy=float(
+            config["anchorcal"]["random_token_max_balanced_accuracy"]
+        ),
+    )
+    return {
+        **result,
+        "protocol": "repeated_exact_per_draw_source_class_balance",
+        "draw_mode": mode,
+        "tokens_per_source_class_per_recipient": background.token_budget // 2,
+        "source_patches_per_class": int(count),
+        "source_unique_images_by_class": {
+            str(label): len(source_image_ids[label]) for label in (0, 1)
+        },
+        "source_recipient_overlap_count": 0,
+        "seed_derivation": (
+            "base seed followed by stable_seed(base_seed, repeat, "
+            "'random_token_diagnostic_repeat')"
+        ),
+    }
 
 
 def run_branch_audits(

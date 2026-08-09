@@ -1,4 +1,4 @@
-schema_version: anchorcal-config-v4
+schema_version: anchorcal-config-v5
 
 data:
   release: waterbird_1.0_forest2water2
@@ -111,6 +111,14 @@ anchorcal:
   candidate_score_tolerance: 1.0e-8
   bootstrap_replicates: 200
   final_metric_bootstrap_replicates: 2000
+  # Pilot amendment after the preserved job-72947 diagnostic: remove donor
+  # class-composition noise per recipient and gate the ten-repeat aggregate.
+  random_token_draw_mode: per_draw_class_balanced
+  random_token_repeats: 10
+  random_token_batch_size: 128
+  random_token_bootstrap_replicates: 2000
+  random_token_permutation_replicates: 2000
+  random_token_max_balanced_accuracy: 0.53
   parity_lambdas: [0.0, 0.35, 0.5, 0.8, 1.0]
 
 candidate_grid:
