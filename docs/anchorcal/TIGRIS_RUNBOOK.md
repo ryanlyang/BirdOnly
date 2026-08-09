@@ -7,7 +7,7 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.6.3` and resolved configuration
+The corrected campaign requires AnchorCal `0.6.4` and resolved configuration
 schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
@@ -19,6 +19,13 @@ Post-logit centering, margin normalization, and lambda mixing use FP32, and
 saliency forwards/gradients use the activated FP32 fallback with autocast
 disabled. Direct-versus-cached parity retains its strict `1e-6` logit/criterion
 and `1e-5` saliency limits.
+
+Every Slurm stage exports `HDF5_USE_FILE_LOCKING=FALSE` before importing h5py.
+This avoids TIGRIS filesystem `EAGAIN` failures when immutable candidate HDF5
+artifacts are reopened immediately after publication. Candidate writer
+exclusion remains enforced by AnchorCal's per-run advisory lock, paired
+transaction journal, atomic publication, and SHA-256 manifest; the setting is
+recorded in every immutable job-attempt receipt.
 
 ## 1. One-time checkout and path preparation
 

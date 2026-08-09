@@ -100,6 +100,20 @@ class LauncherContractTests(unittest.TestCase):
         self.assertIn("from anchorcal.config import load_config", launcher)
         self.assertIn("overrides=read_yaml(debug_path)", launcher)
 
+    def test_runtime_disables_redundant_hdf5_locking_and_records_it(self) -> None:
+        runtime = RUNTIME_COMMON.read_text(encoding="utf-8")
+        export = "export HDF5_USE_FILE_LOCKING=FALSE"
+        receipt = "hdf5_use_file_locking=%s"
+        self.assertIn(export, runtime)
+        self.assertIn(receipt, runtime)
+        self.assertLess(
+            runtime.index(export), runtime.index('"$ANCHORCAL_PYTHON" --version')
+        )
+        storage = (REPOSITORY / "src/anchorcal/storage.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("self.lock.acquire()", storage)
+
     def test_preflight_checksum_binds_public_receipt_and_protected_mask_audit(self) -> None:
         source = PREFLIGHT_JOB.read_text(encoding="utf-8")
         self.assertIn("preflight/selector_mask_receipt.json", source)

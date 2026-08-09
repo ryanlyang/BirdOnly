@@ -8,6 +8,11 @@ external journal makes the two per-epoch completion flags one logical commit.
 This module deliberately imports :mod:`h5py` lazily.  Lightweight AnchorCal
 utilities therefore remain importable in environments used only for config or
 path discovery.
+
+On TIGRIS, HDF5's internal file locking is disabled at process startup. Writer
+exclusion and immutable publication are instead enforced by the explicit
+per-run advisory lock, paired transaction journal, atomic renames, and hashed
+manifest implemented here.
 """
 
 from __future__ import annotations

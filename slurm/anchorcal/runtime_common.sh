@@ -106,6 +106,7 @@ anchorcal_write_job_receipt() {
     printf 'frozen_input_receipt_sha256=%s\n' "$ANCHORCAL_INPUT_RECEIPT_SHA256"
     printf 'pythonhashseed=%s\n' "$PYTHONHASHSEED"
     printf 'cublas_workspace_config=%s\n' "$CUBLAS_WORKSPACE_CONFIG"
+    printf 'hdf5_use_file_locking=%s\n' "$HDF5_USE_FILE_LOCKING"
     printf 'hardware=%s\n' "${ANCHORCAL_HARDWARE_MODE:-unknown}"
     printf 'gpu=%s\n' "${ANCHORCAL_GPU_INFO:-none}"
     printf 'stdout_log=%s/run_logs/%s_%s.out\n' \
@@ -173,6 +174,12 @@ anchorcal_prepare_runtime() {
   export PYTHONUNBUFFERED=1
   export PYTHONHASHSEED="$run_seed"
   export CUBLAS_WORKSPACE_CONFIG=:4096:8
+  # TIGRIS's campaign filesystem can reject an immediate read-only reopen of
+  # a just-published HDF5 file with EAGAIN. Candidate writes remain serialized
+  # by AnchorCal's explicit per-run fcntl lock, transaction journal, atomic
+  # publication, and SHA-256 manifest, so the redundant HDF5-internal lock is
+  # disabled consistently before h5py is imported by any stage.
+  export HDF5_USE_FILE_LOCKING=FALSE
   export HF_HOME=/home/ryreu/.cache/huggingface
   export TORCH_HOME=/home/ryreu/.cache/torch
   export PYTHONPATH="$ANCHORCAL_REPO/src"

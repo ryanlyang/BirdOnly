@@ -177,6 +177,24 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   schedule, invalid cross-field schedule, and pre-submission validation
   regressions. Python compilation, every AnchorCal shell/Slurm syntax check,
   and `git diff --check` also passed.
+- On 2026-08-09, debug job `70710` at commit `50ce50c` passed preflight,
+  branch training/audits, anchor evaluation/cache parity, all three candidate
+  training epochs, paired HDF5 publication, and checkpoint completion. Its
+  immediate final read-only storage verification then failed with HDF5
+  `BlockingIOError`/`EAGAIN` while reopening the published selector file on the
+  TIGRIS campaign filesystem. The failure was operational and occurred after
+  candidate computation and publication, not in model training or selection.
+- AnchorCal `0.6.4` exports `HDF5_USE_FILE_LOCKING=FALSE` consistently in every
+  frozen Slurm stage before h5py import and records the setting in each job
+  receipt. HDF5's redundant filesystem lock is unnecessary here: candidate
+  writes retain the explicit per-run `fcntl` writer lock, paired transaction
+  journal, atomic renames, immutable publication, and SHA-256 manifest/schema
+  verification. The scientific configuration remains `anchorcal-config-v4`.
+- The completed `0.6.4` TIGRIS HDF5 repair passed **213 AnchorCal tests** and
+  all **81 retained SETV tests** (**294 total**), including a regression that
+  binds the pre-import runtime setting, its job-receipt field, and continued
+  explicit candidate writer locking. Python compilation, every AnchorCal
+  shell/Slurm syntax check, and `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

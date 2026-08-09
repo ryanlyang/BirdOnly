@@ -1,7 +1,7 @@
 # AnchorCal Waterbirds100 pilot
 
 The active research implementation is the independent `anchorcal` package.
-The corrected Waterbirds100 contract is AnchorCal version `0.6.3` with resolved
+The corrected Waterbirds100 contract is AnchorCal version `0.6.4` with resolved
 configuration schema `anchorcal-config-v4`.
 It builds controlled foreground-reliance anchors, uses them to select one of
 four practical validation criteria, and evaluates that frozen choice on a

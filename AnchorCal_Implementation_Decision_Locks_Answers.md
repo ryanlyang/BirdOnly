@@ -63,7 +63,7 @@ Configuration Snapshot; and the mask entries under Remaining
 Environment-Specific Preflight Items. Non-conflicting requirements remain
 binding.
 
-This incompatible correction is versioned as AnchorCal package `0.6.3`,
+This incompatible correction is versioned as AnchorCal package `0.6.4`,
 resolved configuration schema `anchorcal-config-v4`, VLM-mask manifest schema
 `anchorcal-vlm-mask-manifest-v3`, and split manifest schema
 `anchorcal-splits-v4`. Older schema artifacts cannot satisfy this campaign.
