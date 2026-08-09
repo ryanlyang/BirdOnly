@@ -88,6 +88,18 @@ class LauncherContractTests(unittest.TestCase):
         self.assertIn("from anchorcal.runtime import write_package_lock", launcher)
         self.assertIn("from anchorcal.runtime import write_package_lock", runtime)
 
+    def test_launcher_validates_production_and_debug_configs_before_submission(self) -> None:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        validation = launcher.index(
+            'progress "validating locked production and debug configurations"'
+        )
+        first_submit = launcher.index(
+            'submit_job "$REPO/slurm/anchorcal/preflight.sbatch"'
+        )
+        self.assertLess(validation, first_submit)
+        self.assertIn("from anchorcal.config import load_config", launcher)
+        self.assertIn("overrides=read_yaml(debug_path)", launcher)
+
     def test_preflight_checksum_binds_public_receipt_and_protected_mask_audit(self) -> None:
         source = PREFLIGHT_JOB.read_text(encoding="utf-8")
         self.assertIn("preflight/selector_mask_receipt.json", source)

@@ -160,6 +160,23 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   FP32-mixing cache parity and FP32-saliency-context regressions. Python
   compilation, every AnchorCal shell/Slurm syntax check, and
   `git diff --check` also passed.
+- On 2026-08-09, debug job `70634` at commit `a35c771` passed preflight,
+  branch training/audits, anchor evaluation, and the strict direct/cache parity
+  gate. Candidate initialization then failed before its first optimizer update
+  because the three-epoch debug trajectory inherited the production setting of
+  four warmup epochs. Production's 40/4 schedule was unaffected.
+- AnchorCal `0.6.3` explicitly locks the miniature candidate trajectory to
+  three epochs with one warmup epoch. Cross-field configuration validation now
+  rejects any branch or candidate warmup longer than its training trajectory,
+  and the launcher validates both production and debug configs before any
+  Slurm submission, moving this failure ahead of GPU allocation.
+  Production remains 40 candidate epochs with four warmup epochs, and the
+  scientific configuration schema remains `anchorcal-config-v4`.
+- The completed `0.6.3` debug-schedule repair passed **212 AnchorCal tests** and
+  all **81 retained SETV tests** (**293 total**), including the new locked-debug
+  schedule, invalid cross-field schedule, and pre-submission validation
+  regressions. Python compilation, every AnchorCal shell/Slurm syntax check,
+  and `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

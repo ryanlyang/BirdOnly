@@ -7,7 +7,7 @@ from the authoritative TIGRIS checkout:
 /home/ryreu/guided_cnn/BirdOnly
 ```
 
-The corrected campaign requires AnchorCal `0.6.2` and resolved configuration
+The corrected campaign requires AnchorCal `0.6.3` and resolved configuration
 schema `anchorcal-config-v4`; older campaign artifacts are incompatible.
 
 It targets account `reu-aisocial`, partition `tigris`, and GH200 GPUs. The
@@ -367,6 +367,11 @@ commit-specific checkout.
 The standalone debug is an end-to-end scientific gate rather than a production
 artifact source. Its branches, receipt, candidate files, and final analysis
 remain entirely below `debug/` and are never eligible for the production join.
+Its three-epoch candidate trajectory uses one explicit warmup epoch; production
+remains locked to 40 candidate epochs with four warmup epochs. Configuration
+validation rejects a warmup longer than its corresponding training trajectory,
+and the launcher validates both production and debug configs before submitting
+the preflight job.
 
 ## 7. Final verification and collection
 

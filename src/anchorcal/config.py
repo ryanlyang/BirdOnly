@@ -222,6 +222,7 @@ def validate_locked_config(config: dict[str, Any], *, debug: bool = False) -> No
             ("candidate_grid", "epochs"),
             ("candidate_grid", "learning_rates"),
             ("candidate_grid", "weight_decays"),
+            ("candidate_grid", "warmup_epochs"),
             ("anchorcal", "bootstrap_replicates"),
             ("anchorcal", "final_metric_bootstrap_replicates"),
             ("criteria", "selector_eval_per_class"),
@@ -271,6 +272,13 @@ def validate_locked_config(config: dict[str, Any], *, debug: bool = False) -> No
         raise ConfigurationError(
             "diagnostic-only criteria differ from the locked controls"
         )
+    for section in ("branches", "candidate_grid"):
+        epochs = int(config[section]["epochs"])
+        warmup_epochs = int(config[section]["warmup_epochs"])
+        if epochs < 1 or not 0 <= warmup_epochs <= epochs:
+            raise ConfigurationError(
+                f"{section}.warmup_epochs must be in [0, {section}.epochs]"
+            )
     if debug:
         debug_expected = {
             ("branches", "frozen_epoch"): 3,
@@ -279,6 +287,7 @@ def validate_locked_config(config: dict[str, Any], *, debug: bool = False) -> No
             ("candidate_grid", "learning_rates"): [3.0e-5],
             ("candidate_grid", "weight_decays"): [0.05],
             ("candidate_grid", "epochs"): 3,
+            ("candidate_grid", "warmup_epochs"): 1,
             ("anchorcal", "bootstrap_replicates"): 20,
             ("anchorcal", "final_metric_bootstrap_replicates"): 20,
             ("criteria", "selector_eval_per_class"): 32,

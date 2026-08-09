@@ -124,8 +124,22 @@ class SeedAndConfigurationContractTests(unittest.TestCase):
             pilot, read_yaml(ROOT / "configs" / "anchorcal" / "debug.yaml")
         )
         validate_locked_config(debug, debug=True)
+        self.assertEqual(debug["candidate_grid"]["epochs"], 3)
+        self.assertEqual(debug["candidate_grid"]["warmup_epochs"], 1)
         debug["anchorcal"]["final_metric_bootstrap_replicates"] = 21
         with self.assertRaises(ConfigurationError):
+            validate_locked_config(debug, debug=True)
+
+    def test_config_rejects_warmup_longer_than_training(self) -> None:
+        pilot = read_yaml(ROOT / "configs" / "anchorcal" / "pilot.yaml")
+        debug = deep_merge(
+            pilot, read_yaml(ROOT / "configs" / "anchorcal" / "debug.yaml")
+        )
+        debug["candidate_grid"]["warmup_epochs"] = 4
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            r"candidate_grid\.warmup_epochs must be in",
+        ):
             validate_locked_config(debug, debug=True)
 
     def test_optimizer_and_candidate_grid_are_not_silently_mutable(self) -> None:

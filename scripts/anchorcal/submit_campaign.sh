@@ -122,6 +122,23 @@ for filename in (
         raise SystemExit(f"frozen FCV membership artifact is missing: {candidate}")
 ' "$PATHS_SOURCE"
 
+# Validate both frozen scientific configurations before creating campaign
+# artifacts or requesting any Slurm allocation. This catches debug-only
+# cross-field errors that production preflight would not otherwise exercise.
+progress "validating locked production and debug configurations"
+"$ANCHORCAL_PYTHON" -c 'import sys
+from anchorcal.config import load_config
+from anchorcal.io import read_yaml
+config_path, debug_path, paths_path = sys.argv[1:]
+load_config(config_path, paths_path, require_paths=True)
+load_config(
+    config_path,
+    paths_path,
+    overrides=read_yaml(debug_path),
+    require_paths=True,
+)
+' "$CONFIG_SOURCE" "$DEBUG_CONFIG" "$PATHS_SOURCE"
+
 # Slurm opens stdout/stderr before the job body, so these directories must
 # exist at submission time.
 mkdir -p -- \

@@ -13,6 +13,7 @@ candidate_grid:
   learning_rates: [3.0e-5]
   weight_decays: [0.05]
   epochs: 3
+  warmup_epochs: 1
 criteria:
   selector_eval_total: 64
   selector_eval_per_class: 32
