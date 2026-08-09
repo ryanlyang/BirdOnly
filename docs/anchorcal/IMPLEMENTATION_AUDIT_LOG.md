@@ -195,6 +195,23 @@ below claims that the real dataset or TIGRIS GH200 was available locally.
   binds the pre-import runtime setting, its job-receipt field, and continued
   explicit candidate writer locking. Python compilation, every AnchorCal
   shell/Slurm syntax check, and `git diff --check` also passed.
+- On 2026-08-09, campaign `7080a58` passed preflight, standalone debug, and
+  both production branch jobs. Production anchor job `72587` then reached the
+  prespecified random-token hard gate and produced balanced accuracy `0.5280`
+  with bootstrap interval `[0.5061, 0.5483]`: the point estimate passed the
+  `0.53` cap, while the lower interval endpoint missed chance by `0.0061`.
+- Added a read-only, separately submitted borderline diagnostic. It reuses and
+  hash-verifies the completed background checkpoint, exactly reproduces the
+  original seed-8003 pooled draw, evaluates nine additional fixed realizations,
+  repeats them with exactly 16/16 source-class-balanced patches per recipient,
+  and reports per-class rates, aggregate bootstrap behavior, a label
+  permutation test, and disjointness/provenance. It writes outside the frozen
+  campaign and neither changes nor overrides the hard gate.
+- The diagnostic implementation passed **217 AnchorCal tests** and all **81
+  retained SETV tests** (**298 total**), including exact reproduction of the
+  original pooled draw, per-draw class-balance/uniqueness, summary, and invalid
+  contract regressions. Python compilation, every AnchorCal shell/Slurm syntax
+  check, and `git diff --check` also passed.
 
 ## Phase 0: specification and repository audit
 

@@ -380,6 +380,26 @@ validation rejects a warmup longer than its corresponding training trajectory,
 and the launcher validates both production and debug configs before submitting
 the preflight job.
 
+### Borderline random-token diagnostic
+
+If the original production random-token gate is borderline, preserve the
+failed campaign and its completed branch checkpoints. From a clean committed
+checkout, submit the read-only diagnostic with:
+
+```bash
+export ANCHORCAL_PYTHON=/home/ryreu/miniforge3-aarch64/envs/fcv_gh200/bin/python
+bash scripts/anchorcal/submit_random_token_diagnostic.sh
+```
+
+The 30-minute job does not retrain or mutate the frozen campaign. It evaluates
+ten fixed realizations of both the exact original pooled draw and an exactly
+16/16 per-draw source-class-balanced construction, then writes a small report
+under `outputs/anchorcal/random_token_diagnostics/reports/`. It reports the
+original gate outcome for each realization, aggregate bootstrap behavior,
+per-class prediction rates, a recipient-label permutation test, provenance,
+and source/recipient disjointness. It is explicitly diagnostic-only and cannot
+silently override the original gate.
+
 ## 7. Final verification and collection
 
 After the final job completes:
